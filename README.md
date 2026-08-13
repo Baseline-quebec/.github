@@ -93,6 +93,14 @@ Le déploiement se fait en deux temps volontairement séparés.
 2. **Mode bloquant.** Une fois le bruit maîtrisé, passer l'action en
    `mode: bloquant` et le ruleset en `Active`.
 
+```bash
+gh auth refresh -h github.com -s admin:org   # une seule fois
+
+./scripts/creer-ruleset.sh          # étape 1 : evaluate, rien n'est bloqué
+./scripts/exiger-pull-request.sh    # optionnel : ferme le trou du push direct
+./scripts/activer-ruleset.sh        # étape 2 : blocage réel
+```
+
 ## Développement
 
 ```bash
