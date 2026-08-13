@@ -28,9 +28,14 @@ suivent au déplacement du tag `v1`.
 
 La règle GitHub *Require workflows to pass before merging* n'écoute que
 `pull_request` et `merge_group`, et ces déclencheurs ne sont pas configurables.
-**Un push direct vers `main` n'est donc jamais analysé.** La seule façon de
-couvrir ce cas est d'ajouter au même ruleset la règle *Require a pull request
-before merging*, ce qui supprime le push direct.
+**Un push direct vers `main` n'est donc jamais analysé.**
+
+Chez Baseline, ce trou est déjà fermé : un ruleset organisationnel existant
+exige une pull request pour toute modification de la branche par défaut, ce qui
+a été constaté en tentant de pousser directement sur ce dépôt. Toute
+modification passe donc forcément par une pull request, et donc par le scan.
+Reste à vérifier, une fois le scope `admin:org` disponible, que ce ruleset cible
+bien l'ensemble des dépôts et pas un sous-ensemble.
 
 ## Politique de licences
 
@@ -92,6 +97,13 @@ Le déploiement se fait en deux temps volontairement séparés.
    positifs avant d'imposer quoi que ce soit.
 2. **Mode bloquant.** Une fois le bruit maîtrisé, passer l'action en
    `mode: bloquant` et le ruleset en `Active`.
+
+```bash
+gh auth refresh -h github.com -s admin:org   # une seule fois
+
+./scripts/creer-ruleset.sh          # étape 1 : evaluate, rien n'est bloqué
+./scripts/activer-ruleset.sh        # étape 2 : blocage réel
+```
 
 ## Développement
 
