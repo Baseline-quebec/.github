@@ -1,10 +1,8 @@
-"""Classifie les licences extraites par Trivy selon la politique Baseline.
+"""Classifie les licences extraites par extraire.py selon la politique Baseline.
 
-Trivy fait l'extraction (quelle licence pour quelle dépendance), ce module fait
-la décision (est-ce que cette licence est acceptable). La séparation est
-délibérée : la classification par catégories de Trivy ne connaît ni BUSL, ni
-SSPL, ni PolyForm, et son fichier de configuration ignore silencieusement les
-clés inconnues, ce qui produirait une politique non appliquée sans erreur.
+L'extraction dit quelle licence porte quelle dépendance, ce module décide si
+elle est acceptable. La séparation permet de changer la politique sans toucher
+à la lecture des métadonnées, et de tester la décision sans dépôt réel.
 
 Sortie : un rapport Markdown dans le résumé de job GitHub, des annotations sur
 la PR, et un code de retour non nul si au moins une licence interdite subsiste
@@ -274,6 +272,11 @@ def rediger(constats: list[Constat], depot: str) -> str:
     return "\n".join(lignes)
 
 
+def _serialiser(constats: list[Constat], verdict: Verdict) -> list[dict[str, str]]:
+    """Extrait les constats d'un verdict, pour agrégation entre dépôts."""
+    return [{"paquet": c.paquet, "licence": c.licence} for c in constats if c.verdict is verdict]
+
+
 def annoter(constats: list[Constat]) -> None:
     """Émet les annotations GitHub visibles directement dans la PR."""
     for constat in constats:
@@ -294,6 +297,11 @@ def main() -> int:
     analyseur.add_argument("--rapport-trivy", type=Path, required=True)
     analyseur.add_argument("--politique", type=Path, required=True)
     analyseur.add_argument("--depot", default=os.environ.get("GITHUB_REPOSITORY", "dépôt local"))
+    analyseur.add_argument(
+        "--sortie-json",
+        type=Path,
+        help="Écrit les constats en JSON, pour agrégation par le rapport mensuel.",
+    )
     analyseur.add_argument(
         "--sans-blocage",
         action="store_true",
@@ -319,6 +327,22 @@ def main() -> int:
     print(markdown)
 
     annoter(constats)
+
+    if arguments.sortie_json:
+        arguments.sortie_json.write_text(
+            json.dumps(
+                {
+                    "depot": arguments.depot,
+                    "total": len(constats),
+                    "interdites": _serialiser(constats, Verdict.INTERDITE),
+                    "a_surveiller": _serialiser(constats, Verdict.A_SURVEILLER),
+                    "inconnues": _serialiser(constats, Verdict.INCONNUE),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
     interdites = [c for c in constats if c.verdict is Verdict.INTERDITE]
 

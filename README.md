@@ -16,6 +16,30 @@ La détection de dérive des modèles LLM, c'est-à-dire un modèle qui devient
 déprécié alors que le code n'a pas bougé, reste couverte par le cron mensuel de
 [`tracking-llm-discontinued`](https://github.com/Baseline-quebec/tracking-llm-discontinued).
 
+## Rapport mensuel dans Slack
+
+`licence-digest.yml` tourne le 1er de chaque mois et poste dans **team-dev**
+(`C07PLSJB1J9`) : deux ou trois lignes, puis une puce par dépôt portant une
+dépendance à arbitrer. Le rapport des modèles dépréciés part le même jour dans
+son propre canal, depuis `tracking-llm-discontinued`.
+
+Chaque dépôt est scanné par un job de matrice qui réutilise **exactement la même
+action** que les pull requests. Le rapport mensuel et le blocage en PR ne
+peuvent donc pas diverger : une seule politique, un seul extracteur.
+
+Le formatage du message vit dans `baseline-automation`, script Windmill
+`f/windmill/scripts/Admin/rapport_conformite/send_slack_report`, là où se
+trouvent déjà le jeton Slack et les conventions de rapport de l'équipe. Ce dépôt
+n'envoie que le résultat structuré.
+
+Le message part **même quand rien n'est trouvé** : un canal silencieux est
+ambigu, on ne sait pas si le balayage a tourné ou s'il est cassé.
+
+Prérequis : le secret `ORG_SWEEP_TOKEN` pour lister et cloner les dépôts, la
+variable `WINDMILL_RAPPORT_CONFORMITE_URL` et le secret `WINDMILL_TOKEN` pour
+l'envoi. Sans les deux derniers, le balayage tourne et le rapport est
+simplement sauté.
+
 ## Pourquoi un ruleset plutôt que le cookiecutter
 
 Le cookiecutter ne couvre que les nouveaux dépôts et ne rattrape jamais les

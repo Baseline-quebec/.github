@@ -17,6 +17,12 @@ inputs:
     description: "Sous-répertoire à analyser, relatif à la racine du dépôt."
     required: false
     default: "."
+  rapport-json:
+    description: >
+      Chemin où écrire les constats en JSON. Utilisé par le rapport mensuel de
+      l'organisation, qui agrège un fichier par dépôt. Vide pour ne rien écrire.
+    required: false
+    default: ""
 
 outputs:
   interdites:
@@ -182,10 +188,14 @@ runs:
         MODE: ${{ inputs.mode }}
         RAPPORT: ${{ runner.temp }}/licences.json
         ACTION_PATH: ${{ github.action_path }}
+        RAPPORT_JSON: ${{ inputs.rapport-json }}
       run: |
         set -euo pipefail
         options=(--rapport-trivy "$RAPPORT" --politique "$ACTION_PATH/politique.yaml")
         if [ "$MODE" != "bloquant" ]; then
           options+=(--sans-blocage)
+        fi
+        if [ -n "$RAPPORT_JSON" ]; then
+          options+=(--sortie-json "$RAPPORT_JSON")
         fi
         uv run --no-project --with pyyaml python "$ACTION_PATH/report.py" "${options[@]}"

@@ -1,0 +1,120 @@
+# Rapport mensuel de licences pour toute l'organisation.
+#
+# Complémentaire au scan imposé sur pull request, qui ne voit qu'un dépôt à la
+# fois et ne dit rien de l'état d'ensemble. Ce rapport répond à une question
+# différente : quels projets portent aujourd'hui une dépendance dont la licence
+# demande un arbitrage.
+#
+# Chaque dépôt est scanné par un job de matrice qui réutilise EXACTEMENT la même
+# action que les pull requests. Le rapport mensuel et le blocage en PR ne
+# peuvent donc pas diverger : une seule politique, un seul extracteur.
+#
+# Le message part dans team-dev, formaté par le script Windmill de
+# baseline-automation, là où se trouvent le jeton Slack et les conventions de
+# rapport de l'équipe.
+
+name: Rapport mensuel des licences
+
+on:
+  schedule:
+    - cron: "0 9 1 * *" # Le 1er de chaque mois, apres le balayage des modeles
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: licence-digest
+  cancel-in-progress: false
+
+jobs:
+  lister:
+    name: Lister les depots
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      depots: ${{ steps.liste.outputs.depots }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Enumerer
+        id: liste
+        env:
+          GH_TOKEN: ${{ secrets.ORG_SWEEP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error title=Jeton manquant::Le secret ORG_SWEEP_TOKEN est requis pour lister les depots."
+            exit 1
+          fi
+          uv run --no-project python actions/licence-scan/digest.py lister \
+            --org Baseline-quebec \
+            --exclure .github
+
+  scanner:
+    name: ${{ matrix.depot }}
+    needs: lister
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Un depot dont l'installation casse ne doit pas annuler les 81 autres, et
+    # ne doit pas non plus faire echouer le rapport : il sera simplement absent
+    # du total analyse, ce que le message rend visible.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        depot: ${{ fromJson(needs.lister.outputs.depots) }}
+    steps:
+      - name: Recuperer le depot analyse
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ matrix.depot }}
+          token: ${{ secrets.ORG_SWEEP_TOKEN }}
+
+      - name: Analyser les licences
+        uses: Baseline-quebec/.github/actions/licence-scan@v1
+        with:
+          mode: observation
+          rapport-json: ${{ runner.temp }}/rapport.json
+
+      - name: Nommer le rapport
+        id: nom
+        env:
+          DEPOT: ${{ matrix.depot }}
+        run: echo "fichier=${DEPOT//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Conserver le rapport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: licences-${{ steps.nom.outputs.fichier }}
+          path: ${{ runner.temp }}/rapport.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  rapport:
+    name: Poster le rapport
+    needs: scanner
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Rassembler les rapports
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        with:
+          path: rapports
+          pattern: licences-*
+
+      - name: Agreger et envoyer
+        env:
+          WINDMILL_WEBHOOK_URL: ${{ vars.WINDMILL_RAPPORT_CONFORMITE_URL }}
+          WINDMILL_TOKEN: ${{ secrets.WINDMILL_TOKEN }}
+        run: |
+          set -euo pipefail
+          uv run --no-project python actions/licence-scan/digest.py agreger --dossier rapports
