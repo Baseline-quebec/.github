@@ -40,9 +40,8 @@ bien l'ensemble des dépôts et pas un sous-ensemble.
 ## Politique de licences
 
 La politique vit dans [`actions/licence-scan/politique.yaml`](actions/licence-scan/politique.yaml),
-seule source de vérité. Trivy sert uniquement à extraire la licence de chaque
-dépendance ; la classification est faite par `report.py`, pas par les catégories
-de Trivy, qui ne connaissent ni BUSL, ni SSPL, ni PolyForm.
+seule source de vérité. `extraire.py` lit la licence déclarée par chaque
+dépendance installée, `report.py` la classe contre la politique.
 
 | Catégorie | Effet | Exemples |
 |---|---|---|
@@ -67,18 +66,47 @@ Une exception sans justification ni date de révision doit être refusée en rev
 L'exception est nominative : elle ne débloque que le paquet nommé, pas toutes
 les dépendances sous la même licence.
 
-## Deux pièges qui font passer un scan pour vert
+## Pourquoi pas Trivy
 
-**L'installation est obligatoire.** Trivy lit la licence dans les fichiers
-`METADATA` des paquets **installés**, pas dans `uv.lock` ni `poetry.lock`. Un
-dépôt scanné sans installation retourne zéro licence, ce qui ressemble à un
-succès. L'action installe donc les dépendances avant de scanner, et le rapport
-dit explicitement quand il n'a rien trouvé à analyser.
+Trivy était le choix initial. Il a été écarté après vérification sur un dépôt
+réel de 238 paquets : ses analyseurs `uv.lock`, `poetry.lock` et
+`requirements.txt` ne portent **aucune** information de licence, il ne lit pas
+les fichiers `.dist-info/METADATA`, et son mode `--license-full` ne produit que
+des correspondances de texte sans attribution par paquet, 1140 entrées dont
+« Copyright ». Un scan Trivy sur un projet Python retourne donc zéro licence,
+c'est-à-dire exactement le résultat qu'on obtiendrait s'il n'y avait rien à
+signaler.
+
+`extraire.py` lit les métadonnées à la source, sans dépendance externe :
+`.dist-info/METADATA` et `.egg-info/PKG-INFO` pour Python, `package.json` sous
+`node_modules` pour Node.
+
+## Pièges qui font passer un scan pour vert
+
+**L'installation est obligatoire.** La licence n'existe que dans les
+métadonnées des paquets **installés**. Ni `uv.lock` ni `poetry.lock` ne la
+portent. L'action installe donc les dépendances avant de lire, et le rapport
+dit explicitement quand il n'a rien trouvé plutôt que d'afficher un zéro
+rassurant.
 
 **`BSL-1.0` n'est pas `BSL-1.1`.** La première est la Boost Software License,
 permissive. La seconde est un alias courant de la Business Source License,
 restrictive. Les motifs de la politique sont ancrés pour ne jamais les
 confondre ; un test le vérifie.
+
+**Les métadonnées Python sont sales, et chaque forme de saleté ment
+différemment.** Les trois cas suivants sont figés par des tests construits sur
+des paquets réellement installés chez Baseline :
+
+| Paquet | Ce qu'il déclare | Piège |
+|---|---|---|
+| `ptyprocess` | `License: UNKNOWN` + classifier ISC | Lire le champ libre en premier produit un faux « non déclarée » |
+| `numpy` | Texte BSD complet, paragraphes séparés par des lignes d'espaces | Une ligne d'espaces n'est pas une ligne vide : la traiter comme la fin des en-têtes fait manquer le classifier situé 970 lignes plus bas |
+| `tiktoken` | `License: MIT License` puis le texte MIT en continuation | Concaténer les continuations transforme une déclaration nette en pavé illisible |
+
+Mesuré sur quatre dépôts Baseline : 683 dépendances analysées, zéro faux
+positif, 5 licences réellement non déclarées, et deux vraies détections
+copyleft (`psycopg` en LGPL-3.0, `codespell` en GPL-2.0).
 
 ## Gestionnaires reconnus
 
