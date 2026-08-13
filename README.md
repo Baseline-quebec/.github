@@ -119,6 +119,13 @@ Un dépôt sans aucun de ces fichiers produit un rapport vide et un job vert.
 
 Le déploiement se fait en deux temps, mais **pas** de la façon qu'on attendrait.
 
+### Le dépôt du scanner est exclu
+
+`tracking-llm-discontinued` est exclu du ruleset, et ce n'est pas cosmétique :
+son registre contient l'identifiant de chaque modèle déprécié connu. Y lancer le
+scanner de modèles revient à lui faire scanner sa propre liste, ce qui produit
+une issue par modèle. Constaté en production, 182 issues en une seule exécution.
+
 ### Ce dépôt doit rester public
 
 Un workflow imposé par ruleset **ne se déclenche pas** si son dépôt source est
