@@ -24,6 +24,11 @@ DEPOT_SOURCE_ID="1333554887" # Baseline-quebec/.github
 REF="refs/tags/v1"
 NOM_RULESET="Conformité Baseline"
 
+# tracking-llm-discontinued est exclu, et l'exclusion n'est pas cosmétique :
+# son registre contient l'identifiant de chaque modèle déprécié connu, donc y
+# lancer le scanner produit une issue par modèle. Constaté en production, 182
+# issues en une exécution.
+
 charge_utile=$(
   cat <<JSON
 {
@@ -32,7 +37,7 @@ charge_utile=$(
   "enforcement": "evaluate",
   "conditions": {
     "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] },
-    "repository_name": { "include": ["~ALL"], "exclude": [] }
+    "repository_name": { "include": ["~ALL"], "exclude": ["tracking-llm-discontinued"] }
   },
   "rules": [
     {
