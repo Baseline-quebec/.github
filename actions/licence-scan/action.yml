@@ -1,0 +1,164 @@
+name: "Scan de conformité des licences"
+description: >
+  Installe les dépendances du dépôt, extrait la licence de chacune avec Trivy,
+  puis applique la politique de licences Baseline. Bloque la PR si une licence
+  non commerciale ou source-available restrictive est détectée.
+
+inputs:
+  mode:
+    description: >
+      "bloquant" fait échouer le job sur une licence interdite.
+      "observation" produit le rapport sans jamais bloquer, pour mesurer le
+      volume réel de violations avant d'activer l'application.
+    required: false
+    default: "observation"
+  scan-complet:
+    description: >
+      Si "true", Trivy analyse aussi le texte des fichiers de licence du dépôt
+      en plus des métadonnées de paquets. Beaucoup plus lent et bruyant.
+    required: false
+    default: "false"
+  chemin:
+    description: "Sous-répertoire à analyser, relatif à la racine du dépôt."
+    required: false
+    default: "."
+
+outputs:
+  interdites:
+    description: "Nombre de licences interdites détectées."
+    value: ${{ steps.rapport.outputs.interdites }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Détecter les gestionnaires de dépendances
+      id: detection
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      run: |
+        set -euo pipefail
+
+        python_gest=aucun
+        if [ -f uv.lock ]; then
+          python_gest=uv
+        elif [ -f poetry.lock ]; then
+          python_gest=poetry
+        elif [ -f requirements.txt ]; then
+          python_gest=pip
+        fi
+
+        node_gest=aucun
+        if [ -f pnpm-lock.yaml ]; then
+          node_gest=pnpm
+        elif [ -f package-lock.json ]; then
+          node_gest=npm
+        elif [ -f yarn.lock ]; then
+          node_gest=yarn
+        fi
+
+        echo "python=$python_gest" >> "$GITHUB_OUTPUT"
+        echo "node=$node_gest" >> "$GITHUB_OUTPUT"
+        echo "Gestionnaire Python : $python_gest"
+        echo "Gestionnaire Node : $node_gest"
+
+        if [ "$python_gest" = "aucun" ] && [ "$node_gest" = "aucun" ]; then
+          echo "::notice title=Aucune dépendance::Aucun fichier de verrouillage reconnu, rien à analyser."
+        fi
+
+    - name: Installer uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        enable-cache: true
+
+    # Trivy lit la licence dans les fichiers METADATA des paquets installés,
+    # pas dans le fichier de verrouillage. Sans installation, le scan retourne
+    # zéro licence et un résultat vert trompeur. L'environnement virtuel doit
+    # donc être créé DANS le dépôt pour que Trivy le trouve.
+    - name: Installer les dépendances Python
+      if: steps.detection.outputs.python != 'aucun'
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      env:
+        GESTIONNAIRE: ${{ steps.detection.outputs.python }}
+      run: |
+        set -euo pipefail
+        case "$GESTIONNAIRE" in
+          uv)
+            uv sync --all-extras --frozen
+            ;;
+          poetry)
+            uv tool install poetry
+            poetry config virtualenvs.in-project true --local
+            poetry install --no-interaction --no-root
+            ;;
+          pip)
+            uv venv
+            uv pip install --requirement requirements.txt
+            ;;
+        esac
+
+    - name: Installer Node
+      if: steps.detection.outputs.node != 'aucun'
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version: "22"
+
+    # --ignore-scripts : les scripts postinstall ne changent rien aux licences
+    # déclarées et exécuter du code arbitraire de dépendances tierces dans la CI
+    # est une surface d'attaque gratuite.
+    - name: Installer les dépendances Node
+      if: steps.detection.outputs.node != 'aucun'
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      env:
+        GESTIONNAIRE: ${{ steps.detection.outputs.node }}
+      run: |
+        set -euo pipefail
+        case "$GESTIONNAIRE" in
+          npm)
+            npm ci --ignore-scripts
+            ;;
+          pnpm)
+            corepack enable
+            pnpm install --frozen-lockfile --ignore-scripts
+            ;;
+          yarn)
+            corepack enable
+            yarn install --immutable --mode=skip-build || yarn install --frozen-lockfile --ignore-scripts
+            ;;
+        esac
+
+    - name: Installer Trivy
+      uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+      with:
+        version: "v0.73.0"
+        cache: true
+
+    - name: Extraire les licences
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      env:
+        SCAN_COMPLET: ${{ inputs.scan-complet }}
+        SORTIE: ${{ runner.temp }}/trivy-licences.json
+      run: |
+        set -euo pipefail
+        options=(fs --scanners license --format json --output "$SORTIE" --exit-code 0)
+        if [ "$SCAN_COMPLET" = "true" ]; then
+          options+=(--license-full)
+        fi
+        trivy "${options[@]}" .
+
+    - name: Appliquer la politique
+      id: rapport
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        RAPPORT: ${{ runner.temp }}/trivy-licences.json
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        options=(--rapport-trivy "$RAPPORT" --politique "$ACTION_PATH/politique.yaml")
+        if [ "$MODE" != "bloquant" ]; then
+          options+=(--sans-blocage)
+        fi
+        uv run --no-project --with pyyaml python "$ACTION_PATH/report.py" "${options[@]}"

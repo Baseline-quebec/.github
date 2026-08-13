@@ -1,0 +1,43 @@
+# Workflow central de détection des modèles LLM dépréciés.
+#
+# Remplace le fichier .github/workflows/llm-scan.yml copié dans chaque dépôt.
+# Imposé par un ruleset au niveau de l'organisation, exécuté par GitHub dans le
+# contexte de chaque dépôt ciblé.
+#
+# Portée volontairement partielle : ce workflow empêche d'introduire une
+# référence à un modèle déprécié dans une nouvelle pull request. Il ne détecte
+# PAS la dérive, c'est-à-dire un modèle qui devient déprécié alors que le code
+# du dépôt n'a pas bougé, puisqu'aucune pull request n'est alors ouverte. Ce cas
+# reste couvert par le cron mensuel de Baseline-quebec/tracking-llm-discontinued,
+# qui balaie l'organisation et ouvre les issues.
+
+name: Modèles LLM dépréciés
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: llm-scan-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  modeles:
+    name: Références aux modèles dépréciés
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Analyser les références aux modèles
+        uses: Baseline-quebec/tracking-llm-discontinued@main
+        with:
+          repo-name: ${{ github.repository }}
+          assignees: ${{ vars.LLM_SCAN_ASSIGNEES || '' }}
+          webhook-url: ${{ secrets.LLM_SCAN_WEBHOOK_URL }}
