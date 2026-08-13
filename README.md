@@ -119,6 +119,17 @@ Un dépôt sans aucun de ces fichiers produit un rapport vide et un job vert.
 
 Le déploiement se fait en deux temps, mais **pas** de la façon qu'on attendrait.
 
+### Ce dépôt doit rester public
+
+Un workflow imposé par ruleset **ne se déclenche pas** si son dépôt source est
+privé, même avec l'accès Actions du dépôt réglé sur `organization`. Vérifié :
+avec ce dépôt en privé, aucune exécution n'apparaissait dans les dépôts ciblés,
+sans le moindre message d'erreur nulle part. Le passage en public a suffi à
+tout débloquer.
+
+Ne pas repasser ce dépôt en privé. Il ne contient aucun secret, uniquement de la
+politique de conformité.
+
 ### Le mode Evaluate n'exécute pas les workflows
 
 Vérifié sur l'organisation : avec le ruleset en application `Evaluate`, aucun
