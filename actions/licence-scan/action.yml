@@ -69,28 +69,48 @@ runs:
     # ni poetry.lock ne portent cette information. Sans installation, le scan
     # retourne zéro licence, ce qui ressemble à un succès. L'environnement
     # virtuel doit être créé DANS le dépôt pour être trouvé.
+    # En mode observation, un échec d'installation devient un avertissement et
+    # non un échec de job. Le ruleset qui impose ce workflow doit être en
+    # application Active pour que le workflow s'exécute du tout : en mode
+    # Evaluate, GitHub journalise la règle sans jamais lancer le workflow. Le
+    # niveau d'application vit donc ici, dans `mode`, et non dans le ruleset.
+    # Sans ce garde-fou, un dépôt dont l'installation casse verrouillerait ses
+    # pull requests alors qu'on cherche seulement à mesurer.
     - name: Installer les dépendances Python
       if: steps.detection.outputs.python != 'aucun'
       shell: bash
       working-directory: ${{ inputs.chemin }}
       env:
         GESTIONNAIRE: ${{ steps.detection.outputs.python }}
+        MODE: ${{ inputs.mode }}
       run: |
-        set -euo pipefail
-        case "$GESTIONNAIRE" in
-          uv)
-            uv sync --all-extras --frozen
-            ;;
-          poetry)
-            uv tool install poetry
-            poetry config virtualenvs.in-project true --local
-            poetry install --no-interaction --no-root
-            ;;
-          pip)
-            uv venv
-            uv pip install --requirement requirements.txt
-            ;;
-        esac
+        set -uo pipefail
+        installer() {
+          case "$GESTIONNAIRE" in
+            uv)
+              uv sync --all-extras --frozen
+              ;;
+            poetry)
+              uv tool install poetry
+              poetry config virtualenvs.in-project true --local
+              poetry install --no-interaction --no-root
+              ;;
+            pip)
+              uv venv
+              uv pip install --requirement requirements.txt
+              ;;
+          esac
+        }
+
+        if installer; then
+          exit 0
+        fi
+
+        if [ "$MODE" = "bloquant" ]; then
+          echo "::error title=Installation impossible::Les dépendances Python n'ont pas pu être installées, les licences ne peuvent pas être lues."
+          exit 1
+        fi
+        echo "::warning title=Installation impossible::Les dépendances Python n'ont pas pu être installées. Le rapport de licences sera vide, ce n'est pas un signe de conformité."
 
     - name: Installer Node
       if: steps.detection.outputs.node != 'aucun'
@@ -107,21 +127,35 @@ runs:
       working-directory: ${{ inputs.chemin }}
       env:
         GESTIONNAIRE: ${{ steps.detection.outputs.node }}
+        MODE: ${{ inputs.mode }}
       run: |
-        set -euo pipefail
-        case "$GESTIONNAIRE" in
-          npm)
-            npm ci --ignore-scripts
-            ;;
-          pnpm)
-            corepack enable
-            pnpm install --frozen-lockfile --ignore-scripts
-            ;;
-          yarn)
-            corepack enable
-            yarn install --immutable --mode=skip-build || yarn install --frozen-lockfile --ignore-scripts
-            ;;
-        esac
+        set -uo pipefail
+        installer() {
+          case "$GESTIONNAIRE" in
+            npm)
+              npm ci --ignore-scripts
+              ;;
+            pnpm)
+              corepack enable
+              pnpm install --frozen-lockfile --ignore-scripts
+              ;;
+            yarn)
+              corepack enable
+              yarn install --immutable --mode=skip-build ||
+                yarn install --frozen-lockfile --ignore-scripts
+              ;;
+          esac
+        }
+
+        if installer; then
+          exit 0
+        fi
+
+        if [ "$MODE" = "bloquant" ]; then
+          echo "::error title=Installation impossible::Les dépendances Node n'ont pas pu être installées, les licences ne peuvent pas être lues."
+          exit 1
+        fi
+        echo "::warning title=Installation impossible::Les dépendances Node n'ont pas pu être installées. Le rapport de licences sera incomplet."
 
     - name: Extraire les licences déclarées
       shell: bash
@@ -129,9 +163,17 @@ runs:
       env:
         SORTIE: ${{ runner.temp }}/licences.json
         ACTION_PATH: ${{ github.action_path }}
+        MODE: ${{ inputs.mode }}
       run: |
-        set -euo pipefail
-        uv run --no-project python "$ACTION_PATH/extraire.py" --racine . --sortie "$SORTIE"
+        set -uo pipefail
+        if uv run --no-project python "$ACTION_PATH/extraire.py" --racine . --sortie "$SORTIE"; then
+          exit 0
+        fi
+        if [ "$MODE" = "bloquant" ]; then
+          exit 1
+        fi
+        echo "::warning title=Extraction impossible::Les métadonnées de licence n'ont pas pu être lues."
+        echo '{"Results": []}' > "$SORTIE"
 
     - name: Appliquer la politique
       id: rapport

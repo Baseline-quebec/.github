@@ -117,20 +117,35 @@ Un dépôt sans aucun de ces fichiers produit un rapport vide et un job vert.
 
 ## Mise en service
 
-Le déploiement se fait en deux temps volontairement séparés.
+Le déploiement se fait en deux temps, mais **pas** de la façon qu'on attendrait.
 
-1. **Mode observation.** L'action tourne avec `mode: observation` et le ruleset
-   est en application `Evaluate`. Rien n'est bloqué, tout est journalisé. Sert à
-   mesurer le volume réel de violations sur les 82 dépôts et à curer les faux
-   positifs avant d'imposer quoi que ce soit.
-2. **Mode bloquant.** Une fois le bruit maîtrisé, passer l'action en
-   `mode: bloquant` et le ruleset en `Active`.
+### Le mode Evaluate n'exécute pas les workflows
+
+Vérifié sur l'organisation : avec le ruleset en application `Evaluate`, aucun
+workflow ne se déclenche. Les insights ne recensent que des évaluations sur
+push, aucune sur pull request, et aucune exécution n'apparaît dans les dépôts
+ciblés. `Evaluate` journalise la règle, il ne lance rien.
+
+Le ruleset doit donc être en application **`Active`** pour que le scan tourne du
+tout. Le niveau d'application ne vit pas dans le ruleset, il vit dans l'entrée
+`mode` de l'action :
+
+| `mode` | Comportement |
+|---|---|
+| `observation` (défaut) | Le rapport est produit, le job réussit toujours. Une licence interdite, une installation cassée ou une extraction impossible deviennent des avertissements. Rien ne peut bloquer une pull request. |
+| `bloquant` | Une licence interdite fait échouer le job, et donc bloque la fusion. |
+
+C'est ce qui rend le déploiement sûr : le ruleset est Active dès le départ pour
+que le scan s'exécute, mais l'action en `observation` est incapable de bloquer
+quoi que ce soit tant qu'on n'a pas mesuré le bruit réel.
 
 ```bash
-gh auth refresh -h github.com -s admin:org   # une seule fois
+gh auth refresh -h github.com -s admin:org   # une seule fois, plus l'autorisation SSO
 
-./scripts/creer-ruleset.sh          # étape 1 : evaluate, rien n'est bloqué
-./scripts/activer-ruleset.sh        # étape 2 : blocage réel
+./scripts/creer-ruleset.sh          # crée le ruleset
+./scripts/activer-ruleset.sh        # Active : le scan s'exécute, sans bloquer
+# ... mesurer un mois, curer politique.yaml ...
+# puis passer l'action en mode: bloquant dans licence-scan.yml et redéplacer v1
 ```
 
 ## Développement

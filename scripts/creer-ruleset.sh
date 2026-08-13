@@ -6,10 +6,12 @@
 # Prérequis : un jeton avec le scope admin:org.
 #   gh auth refresh -h github.com -s admin:org
 #
-# Le ruleset est créé en mode « evaluate » : il s'exécute et journalise sans
-# jamais bloquer une pull request. C'est délibéré. Passer en « active » se fait
-# avec ./scripts/activer-ruleset.sh, une fois le volume réel de violations
-# mesuré sur les 82 dépôts.
+# Le ruleset est créé en mode « evaluate », puis doit être passé en « active »
+# avec ./scripts/activer-ruleset.sh. Contre-intuitif mais vérifié : en mode
+# evaluate, GitHub journalise la règle SANS jamais exécuter les workflows, donc
+# le scan ne tourne pas du tout. Ce qui protège le déploiement n'est pas le mode
+# du ruleset, c'est l'entrée `mode: observation` de l'action, qui rend le job
+# incapable d'échouer.
 #
 # Usage :
 #   ./scripts/creer-ruleset.sh              # crée en mode evaluate
@@ -64,7 +66,9 @@ echo "Création du ruleset « ${NOM_RULESET} » sur ${ORG} en mode evaluate..."
 echo "$charge_utile" | gh api -X POST "orgs/${ORG}/rulesets" --input - --jq '{id, name, enforcement}'
 
 echo
-echo "Fait. Le ruleset n'est PAS bloquant."
+echo "Fait. Attention : en mode evaluate le scan ne s'execute PAS du tout."
+echo "Lancer ./scripts/activer-ruleset.sh pour qu'il tourne. L'action reste"
+echo "en mode observation, donc rien ne peut bloquer une pull request."
 echo "Vérifier les exécutions dans quelques jours :"
 echo "  gh api orgs/${ORG}/rulesets --jq '.[] | {id, name, enforcement}'"
 echo
