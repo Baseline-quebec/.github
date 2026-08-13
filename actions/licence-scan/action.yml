@@ -1,8 +1,9 @@
 name: "Scan de conformité des licences"
 description: >
-  Installe les dépendances du dépôt, extrait la licence de chacune avec Trivy,
-  puis applique la politique de licences Baseline. Bloque la PR si une licence
-  non commerciale ou source-available restrictive est détectée.
+  Installe les dépendances du dépôt, lit la licence déclarée par chacune dans
+  ses métadonnées, puis applique la politique de licences Baseline. Bloque la
+  PR si une licence non commerciale ou source-available restrictive est
+  détectée.
 
 inputs:
   mode:
@@ -12,12 +13,6 @@ inputs:
       volume réel de violations avant d'activer l'application.
     required: false
     default: "observation"
-  scan-complet:
-    description: >
-      Si "true", Trivy analyse aussi le texte des fichiers de licence du dépôt
-      en plus des métadonnées de paquets. Beaucoup plus lent et bruyant.
-    required: false
-    default: "false"
   chemin:
     description: "Sous-répertoire à analyser, relatif à la racine du dépôt."
     required: false
@@ -70,10 +65,10 @@ runs:
       with:
         enable-cache: true
 
-    # Trivy lit la licence dans les fichiers METADATA des paquets installés,
-    # pas dans le fichier de verrouillage. Sans installation, le scan retourne
-    # zéro licence et un résultat vert trompeur. L'environnement virtuel doit
-    # donc être créé DANS le dépôt pour que Trivy le trouve.
+    # La licence se lit dans les métadonnées des paquets INSTALLÉS : ni uv.lock
+    # ni poetry.lock ne portent cette information. Sans installation, le scan
+    # retourne zéro licence, ce qui ressemble à un succès. L'environnement
+    # virtuel doit être créé DANS le dépôt pour être trouvé.
     - name: Installer les dépendances Python
       if: steps.detection.outputs.python != 'aucun'
       shell: bash
@@ -128,32 +123,22 @@ runs:
             ;;
         esac
 
-    - name: Installer Trivy
-      uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-      with:
-        version: "v0.73.0"
-        cache: true
-
-    - name: Extraire les licences
+    - name: Extraire les licences déclarées
       shell: bash
       working-directory: ${{ inputs.chemin }}
       env:
-        SCAN_COMPLET: ${{ inputs.scan-complet }}
-        SORTIE: ${{ runner.temp }}/trivy-licences.json
+        SORTIE: ${{ runner.temp }}/licences.json
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
-        options=(fs --scanners license --format json --output "$SORTIE" --exit-code 0)
-        if [ "$SCAN_COMPLET" = "true" ]; then
-          options+=(--license-full)
-        fi
-        trivy "${options[@]}" .
+        uv run --no-project python "$ACTION_PATH/extraire.py" --racine . --sortie "$SORTIE"
 
     - name: Appliquer la politique
       id: rapport
       shell: bash
       env:
         MODE: ${{ inputs.mode }}
-        RAPPORT: ${{ runner.temp }}/trivy-licences.json
+        RAPPORT: ${{ runner.temp }}/licences.json
         ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
