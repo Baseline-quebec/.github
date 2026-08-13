@@ -71,4 +71,4 @@ echo
 echo "Rappel : la règle « workflows » n'écoute que pull_request et merge_group."
 echo "Un push direct vers la branche par défaut n'est jamais analysé. Pour"
 echo "couvrir ce cas, ajouter la règle pull_request au même ruleset :"
-echo "  ./scripts/exiger-pull-request.sh"
+echo "  (deja couvert chez Baseline par un ruleset org existant)"
