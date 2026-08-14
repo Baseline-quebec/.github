@@ -35,13 +35,17 @@ interdites:
     - "MariaDB-BSL.*"
     # Clause de discrimination d'usage : non conforme à l'OSI, risque juridique
     - "JSON"                      # « shall be used for Good, not Evil »
+    # Copyleft réseau. Bloquant chez Baseline par décision d'équipe : l'AGPL
+    # contamine dès qu'un service est exposé, ce qui est le cas de la plupart de
+    # nos livraisons. Cas concret ayant motivé la règle : PyMuPDF, à remplacer
+    # par pypdfium2.
+    - "AGPL-[0-9.]+(-only|-or-later)?"
 
 # Non bloquant : signalé dans le rapport de la PR, à arbitrer au cas par cas.
 # Licences copyleft. Le risque dépend de si on distribue le code au client ou
 # qu'on l'expose en service, pas de la licence seule.
 a_surveiller:
   motifs:
-    - "AGPL-[0-9.]+(-only|-or-later)?"
     - "GPL-[0-9.]+(-only|-or-later)?"
     - "LGPL-[0-9.]+(-only|-or-later)?"
     - "OSL-[0-9.]+"
