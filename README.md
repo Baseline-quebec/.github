@@ -35,10 +35,31 @@ n'envoie que le résultat structuré.
 Le message part **même quand rien n'est trouvé** : un canal silencieux est
 ambigu, on ne sait pas si le balayage a tourné ou s'il est cassé.
 
-Prérequis : le secret `ORG_SWEEP_TOKEN` pour lister et cloner les dépôts, la
-variable `WINDMILL_RAPPORT_CONFORMITE_URL` et le secret `WINDMILL_TOKEN` pour
-l'envoi. Sans les deux derniers, le balayage tourne et le rapport est
-simplement sauté.
+### Prérequis
+
+Une **GitHub App** installée sur l'organisation, dont l'identifiant et la clé
+privée sont les secrets `ORG_SWEEP_APP_ID` et `ORG_SWEEP_APP_KEY`. Permissions
+requises, côté dépôt uniquement :
+
+| Permission | Niveau | Pourquoi |
+|---|---|---|
+| Contents | Lecture | Cloner chaque dépôt pour lire ses dépendances |
+| Metadata | Lecture | Accordée automatiquement, non désactivable |
+
+Le rapport de licences n'ouvre aucune issue, donc il n'a pas besoin de la
+permission Issues. C'est le balayage des modèles dépréciés, dans
+`tracking-llm-discontinued`, qui l'exige.
+
+Une App plutôt qu'un jeton personnel : le rapport ne dépend d'aucune personne,
+ne casse pas quand quelqu'un quitte l'équipe, et n'a pas d'expiration annuelle.
+
+La liste des dépôts vient de `/installation/repositories` et non de
+`gh repo list` : un jeton d'installation ne peut pas énumérer une organisation
+via GraphQL. L'endpoint retourne exactement ce que l'App a le droit de toucher.
+
+Pour l'envoi, la variable `WINDMILL_RAPPORT_CONFORMITE_URL` et le secret
+`WINDMILL_TOKEN`. Sans eux, le balayage tourne et le rapport est simplement
+sauté.
 
 ## Pourquoi un ruleset plutôt que le cookiecutter
 

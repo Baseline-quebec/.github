@@ -27,24 +27,27 @@ logger = logging.getLogger(__name__)
 
 DELAI_GH = 60
 DELAI_WINDMILL = 30
-LIMITE_DEPOTS = 500
+TAILLE_PAGE = 100
 TYPE_RAPPORT = "licences"
 
 
-def lister_depots(org: str, exclus: set[str]) -> list[str]:
-    """Liste les dépôts non archivés de l'organisation."""
+def lister_depots(exclus: set[str]) -> list[str]:
+    """Liste les dépôts que l'installation de la GitHub App peut atteindre.
+
+    Volontairement pas `gh repo list` : cette commande interroge GraphQL en tant
+    qu'utilisateur, et un jeton d'installation ne peut pas énumérer une
+    organisation par ce chemin. L'endpoint d'installation retourne exactement ce
+    que l'App a le droit de toucher, ce qui est aussi la définition honnête du
+    périmètre du rapport.
+    """
     resultat = subprocess.run(
         [
             "gh",
-            "repo",
-            "list",
-            org,
-            "--limit",
-            str(LIMITE_DEPOTS),
-            "--no-archived",
-            "--source",
-            "--json",
-            "nameWithOwner",
+            "api",
+            "--paginate",
+            f"/installation/repositories?per_page={TAILLE_PAGE}",
+            "--jq",
+            ".repositories[] | select(.archived == false) | .full_name",
         ],
         capture_output=True,
         text=True,
@@ -55,8 +58,8 @@ def lister_depots(org: str, exclus: set[str]) -> list[str]:
         logger.error("Impossible de lister les dépôts : %s", resultat.stderr.strip())
         return []
 
-    noms = [str(e.get("nameWithOwner", "")) for e in json.loads(resultat.stdout or "[]")]
-    return [n for n in noms if n and n not in exclus and n.split("/")[-1] not in exclus]
+    noms = [ligne.strip() for ligne in resultat.stdout.splitlines() if ligne.strip()]
+    return [n for n in noms if n not in exclus and n.split("/")[-1] not in exclus]
 
 
 def agreger(dossier: Path) -> tuple[list[dict[str, Any]], int]:
@@ -129,7 +132,6 @@ def main(argv: list[str] | None = None) -> int:
     sous = analyseur.add_subparsers(dest="commande", required=True)
 
     lister = sous.add_parser("lister", help="Énumère les dépôts à scanner")
-    lister.add_argument("--org", required=True)
     lister.add_argument("--exclure", default="")
 
     agregation = sous.add_parser("agreger", help="Fusionne les rapports et envoie à Windmill")
@@ -139,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if arguments.commande == "lister":
         exclus = {e.strip() for e in arguments.exclure.split(",") if e.strip()}
-        depots = lister_depots(arguments.org, exclus)
+        depots = lister_depots(exclus)
         if not depots:
             # Sous SSO SAML, un jeton non autorisé fait retourner une liste vide
             # sans erreur. Terminer en succès ferait croire à une organisation
