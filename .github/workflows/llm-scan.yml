@@ -11,6 +11,11 @@
 # reste couvert par le cron mensuel de Baseline-quebec/tracking-llm-discontinued,
 # qui balaie l'organisation et ouvre les issues.
 
+# L'URL du webhook est une VARIABLE, pas un secret : une destination n'est pas
+# un identifiant, et la ranger en secret est ce qui a laissé l'intégration CRM
+# échouer en silence avec un 403 que personne ne pouvait diagnostiquer, faute
+# de pouvoir lire vers quoi elle pointait. Seul le jeton reste un secret.
+
 name: Modèles LLM dépréciés
 
 on:
@@ -40,4 +45,5 @@ jobs:
         with:
           repo-name: ${{ github.repository }}
           assignees: ${{ vars.LLM_SCAN_ASSIGNEES || '' }}
-          webhook-url: ${{ secrets.LLM_SCAN_WEBHOOK_URL }}
+          webhook-url: ${{ vars.LLM_SCAN_WEBHOOK_URL }}
+          webhook-token: ${{ secrets.LLM_SCAN_WEBHOOK_TOKEN }}
