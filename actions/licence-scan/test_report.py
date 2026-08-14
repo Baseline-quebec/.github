@@ -65,6 +65,27 @@ def test_licences_permissives_passent(politique: Politique, licence: str) -> Non
     assert verdict_de(politique, "paquet", licence) is Verdict.ACCEPTEE
 
 
+@pytest.mark.parametrize("licence", ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"])
+def test_agpl_bloque(politique: Politique, licence: str) -> None:
+    """L'AGPL est bloquante chez Baseline, pas seulement signalée.
+
+    Elle contamine dès qu'un service est exposé, ce qui est le cas de la
+    plupart des livraisons. Cas concret ayant motivé la règle : PyMuPDF, dont
+    l'usage commercial est interdit sans licence payante, à remplacer par
+    pypdfium2.
+    """
+    assert verdict_de(politique, "pymupdf", licence) is Verdict.INTERDITE
+
+
+def test_gpl_nest_pas_capture_par_le_motif_agpl(politique: Politique) -> None:
+    """Les motifs sont ancrés : « AGPL-3.0 » ne doit pas matcher « GPL-3.0 ».
+
+    Sans ancrage, rendre l'AGPL bloquante bloquerait aussi tout le GPL, qui
+    reste un arbitrage humain selon le mode de livraison.
+    """
+    assert verdict_de(politique, "paquet", "GPL-3.0") is Verdict.A_SURVEILLER
+
+
 def test_boost_nest_pas_confondu_avec_business_source(politique: Politique) -> None:
     """BSL-1.0 est la Boost Software License, permissive.
 
@@ -77,7 +98,7 @@ def test_boost_nest_pas_confondu_avec_business_source(politique: Politique) -> N
 
 
 @pytest.mark.parametrize(
-    "licence", ["AGPL-3.0", "GPL-2.0", "GPL-3.0-or-later", "LGPL-2.1", "EUPL-1.2", "CC-BY-SA-4.0"]
+    "licence", ["GPL-2.0", "GPL-3.0-or-later", "LGPL-2.1", "EUPL-1.2", "CC-BY-SA-4.0"]
 )
 def test_copyleft_signale_sans_bloquer(politique: Politique, licence: str) -> None:
     assert verdict_de(politique, "paquet", licence) is Verdict.A_SURVEILLER

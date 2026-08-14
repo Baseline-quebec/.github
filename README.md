@@ -90,8 +90,8 @@ dépendance installée, `report.py` la classe contre la politique.
 
 | Catégorie | Effet | Exemples |
 |---|---|---|
-| `interdites` | Bloque la fusion | CC-BY-NC, PolyForm, Commons Clause, BUSL-1.1, SSPL, Elastic-2.0, RSAL |
-| `a_surveiller` | Signale sans bloquer | AGPL, GPL, LGPL, EUPL, CC-BY-SA |
+| `interdites` | Bloque la fusion | CC-BY-NC, PolyForm, Commons Clause, BUSL-1.1, SSPL, Elastic-2.0, RSAL, **AGPL** |
+| `a_surveiller` | Signale sans bloquer | GPL, LGPL, EUPL, CC-BY-SA |
 | `ignorees` | Silencieux | MIT, Apache-2.0, BSD, ISC, MPL-2.0 |
 | `licence_inconnue` | Signale sans bloquer | Métadonnée absente ou illisible |
 
@@ -133,6 +133,14 @@ métadonnées des paquets **installés**. Ni `uv.lock` ni `poetry.lock` ne la
 portent. L'action installe donc les dépendances avant de lire, et le rapport
 dit explicitement quand il n'a rien trouvé plutôt que d'afficher un zéro
 rassurant.
+
+**L'AGPL est bloquante, le GPL ne l'est pas.** Décision d'équipe : l'AGPL
+contamine dès qu'un service est exposé, ce qui est le cas de la plupart des
+livraisons Baseline. Cas concret ayant motivé la règle, PyMuPDF, dont l'usage
+commercial exige une licence payante, à remplacer par `pypdfium2`. Le GPL et le
+LGPL restent un arbitrage humain selon le mode de livraison. Les motifs sont
+ancrés pour que la règle AGPL n'attrape pas le GPL au passage ; un test le
+vérifie.
 
 **`BSL-1.0` n'est pas `BSL-1.1`.** La première est la Boost Software License,
 permissive. La seconde est un alias courant de la Business Source License,
