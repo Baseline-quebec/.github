@@ -39,19 +39,25 @@ jobs:
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
+      - name: Obtenir un jeton d'installation
+        id: jeton
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ORG_SWEEP_APP_ID }}
+          private-key: ${{ secrets.ORG_SWEEP_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Enumerer
         id: liste
         env:
-          GH_TOKEN: ${{ secrets.ORG_SWEEP_TOKEN }}
+          GH_TOKEN: ${{ steps.jeton.outputs.token }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error title=Jeton manquant::Le secret ORG_SWEEP_TOKEN est requis pour lister les depots."
+            echo "::error title=Jeton manquant::Les secrets ORG_SWEEP_APP_ID et ORG_SWEEP_APP_KEY sont requis."
             exit 1
           fi
-          uv run --no-project python actions/licence-scan/digest.py lister \
-            --org Baseline-quebec \
-            --exclure .github
+          uv run --no-project python actions/licence-scan/digest.py lister --exclure .github
 
   scanner:
     name: ${{ matrix.depot }}
@@ -68,11 +74,19 @@ jobs:
       matrix:
         depot: ${{ fromJson(needs.lister.outputs.depots) }}
     steps:
+      - name: Obtenir un jeton d'installation
+        id: jeton
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ORG_SWEEP_APP_ID }}
+          private-key: ${{ secrets.ORG_SWEEP_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Recuperer le depot analyse
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ matrix.depot }}
-          token: ${{ secrets.ORG_SWEEP_TOKEN }}
+          token: ${{ steps.jeton.outputs.token }}
 
       - name: Analyser les licences
         uses: Baseline-quebec/.github/actions/licence-scan@v1
