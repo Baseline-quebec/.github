@@ -75,6 +75,19 @@ transitives, et il n'a besoin d'installer rien du tout. C'est ce qui le rend
 utilisable sur un dépôt dont les dépendances ne s'installent plus, c'est-à-dire
 précisément celui qui risque de porter une CVE ancienne.
 
+**Seules les versions verrouillées peuvent bloquer.** osv-scanner type chaque
+source qu'il lit : `lockfile` veut dire que la version est écrite noir sur
+blanc, tout autre type veut dire qu'il a résolu lui-même l'arbre transitif
+faute de verrouillage. Mesuré sur `baseline-automation` : un `requirements.txt`
+non épinglé a produit gitpython 3.1.9 et pillow 9.5.0, alors que le `uv.lock`
+du même dépôt verrouille 3.1.58 et 12.3.0, toutes deux saines. Bloquer là-dessus
+serait arrêter une pull request pour un paquet que personne n'installe, et un
+gate qui crie au loup finit ignoré — ce qui coûte plus cher que la CVE qu'il
+devait attraper.
+
+Ces constats restent au rapport, dans une section à part, avec le seul remède
+qui vaille : verrouiller les dépendances du projet.
+
 Les vulnérabilités de dépendances sont volontairement absentes de
 `secaudit-code` (`trivy --scanners misconfig,secret`) : les compter aux deux
 endroits ferait apparaître la même CVE dans deux rapports, avec deux verdicts
