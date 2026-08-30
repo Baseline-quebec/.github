@@ -37,6 +37,13 @@ concurrency:
 jobs:
   securite:
     name: Secrets, code et configuration
+    # Ce depot-ci est exclu : le `uses` ci-dessous pointe vers le tag v1, et le
+    # tag ne porte le nouveau controle qu'APRES la fusion. Sans cette garde, la
+    # pull request qui introduit un controle echouerait toujours sur un
+    # « action introuvable ». L'action est exercee ici par la CI, qui l'appelle
+    # par son chemin local (./actions/...), ce que l'execution imposee ne peut
+    # pas faire.
+    if: github.repository != 'Baseline-quebec/.github'
     runs-on: ubuntu-latest
     # Six outils dont trois images Docker à tirer. Vingt minutes suffisent
     # largement sur nos dépôts ; au-delà, c'est un scanner bloqué, pas un dépôt

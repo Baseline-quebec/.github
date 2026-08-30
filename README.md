@@ -18,6 +18,12 @@ La détection de dérive des modèles LLM, c'est-à-dire un modèle qui devient
 déprécié alors que le code n'a pas bougé, reste couverte par le cron mensuel de
 [`tracking-llm-discontinued`](https://github.com/Baseline-quebec/tracking-llm-discontinued).
 
+Les workflows de sécurité s'excluent de ce dépôt-ci (`if: github.repository !=`) :
+ils référencent leur action par le tag `v1`, que la pull request qui introduit
+un contrôle n'a pas encore déplacé. La CI les exerce par leur chemin local
+(`./actions/...`), ce que l'exécution imposée ne peut pas faire, donc chaque
+modification est bien testée de bout en bout avant la fusion.
+
 Les deux contrôles de sécurité sont en **mode observation** : ils produisent
 leur rapport et n'empêchent aucune fusion. Passer au mode bloquant se fait dans
 le workflow correspondant, une fois le volume réel de constats mesuré sur les

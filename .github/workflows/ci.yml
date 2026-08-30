@@ -38,6 +38,35 @@ jobs:
             echo "::endgroup::"
           done
 
+  # Exerce les actions de securite de bout en bout, sur ce depot-ci, par leur
+  # chemin local. C'est la seule facon de les tester avant que le tag v1 ne les
+  # porte : les workflows imposes referencent l'action par ce tag, donc ils ne
+  # peuvent pas valider la version en cours de revue.
+  #
+  # Les deux jobs tournent en mode observation. Un constat sur ce depot ne doit
+  # pas bloquer la pull request qui corrige justement le scanner.
+  secaudit-local:
+    name: Audit de securite (chemin local)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: ./actions/secaudit-code
+        with:
+          mode: observation
+
+  cve-local:
+    name: Scan CVE (chemin local)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: ./actions/cve-scan
+        with:
+          mode: observation
+
   # Vérifie que les politiques restent chargeables et que les motifs compilent.
   # Une regex invalide dans un politique.yaml casserait le scan de tous les
   # dépôts de l'organisation d'un coup.
