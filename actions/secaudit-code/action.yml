@@ -169,6 +169,9 @@ runs:
         # Les outils sautes par la detection sont declares tels quels : sans
         # cela, tout depot sans Dockerfile serait accuse d'avoir un scanner
         # muet, et un avertissement qui se declenche toujours cesse d'etre lu.
+        # Ces trois-la seulement : rapport.py refuse tout autre nom, parce
+        # qu'un outil declare non applicable n'est pas lu du tout et qu'une
+        # erreur ici serait donc invisible.
         non_applicables=""
         [ "$PYTHON" = oui ] || non_applicables="${non_applicables}bandit,"
         [ "$IAC" = oui ] || non_applicables="${non_applicables}checkov,"

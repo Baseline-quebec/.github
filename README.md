@@ -53,6 +53,18 @@ cinq autres. Son silence est signalé comme tel dans le rapport, jamais compté
 comme une absence de constat ; un scanner cassé ressemble exactement à un dépôt
 propre.
 
+Trois outils seulement peuvent légitimement ne pas tourner : bandit, checkov et
+hadolint, que la détection saute faute de Python, d'infrastructure ou de
+Dockerfile. La liste est **fermée** et l'action échoue si elle en nomme un
+autre. Un outil déclaré non applicable n'est pas lu du tout : nommer
+« gitleaks » par erreur ferait disparaître tous les secrets trouvés, en silence
+et avec un job vert.
+
+La détection vit dans `actions/secaudit-code/detecter.sh` plutôt que dans un
+bloc `run:`, précisément pour être testable. Une racine inexistante y est une
+erreur, pas un « rien à analyser » : l'audit passerait au vert sans avoir rien
+scanné.
+
 ### Vulnérabilités des dépendances
 
 `actions/cve-scan` confronte les fichiers de verrouillage à la base OSV et

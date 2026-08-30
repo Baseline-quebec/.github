@@ -13,6 +13,7 @@ from rapport import (
     FAIBLE,
     INCONNUE,
     MOYENNE,
+    OUTILS_OPTIONNELS,
     Constat,
     Politique,
     annotation,
@@ -260,6 +261,46 @@ def test_outil_non_applicable_avec_rapport_est_quand_meme_ignore(tmp_path: Path)
     constats, muets = collecter(tmp_path, {"hadolint"})
     assert constats == []
     assert "hadolint" not in muets
+
+
+def test_outil_non_optionnel_declare_non_applicable_est_refuse(tmp_path: Path) -> None:
+    """Nommer « gitleaks » ferait disparaitre tous les secrets, job vert.
+
+    Un outil declare non applicable n'est pas lu du tout : l'erreur ne
+    produirait aucun symptome. La liste est donc fermee.
+    """
+    ecrire(tmp_path, "gitleaks", [{"RuleID": "aws", "File": "a.py", "StartLine": 1}])
+    with pytest.raises(ValueError, match="gitleaks"):
+        collecter(tmp_path, {"gitleaks"})
+
+
+def test_faute_de_frappe_dans_les_non_applicables_est_refusee(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="bandi"):
+        collecter(tmp_path, {"bandi"})
+
+
+def test_liste_fermee_couvre_exactement_ce_que_la_detection_peut_sauter() -> None:
+    """detecter.sh ne peut sauter que ces trois outils : bandit, checkov, hadolint."""
+    assert {"bandit", "checkov", "hadolint"} == OUTILS_OPTIONNELS
+
+
+def test_declaration_incoherente_fait_echouer_le_job(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ecrire(tmp_path, "gitleaks", [])
+    code = main(
+        [
+            "--rapports",
+            str(tmp_path),
+            "--politique",
+            str(RACINE_POLITIQUE),
+            "--non-applicables",
+            "semgrep",
+            "--sans-blocage",
+        ]
+    )
+    assert code == 1
+    assert "Detection incoherente" in capsys.readouterr().out
 
 
 def test_rapport_vide_est_muet(tmp_path: Path) -> None:

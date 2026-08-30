@@ -46,6 +46,7 @@ __all__ = [
     "INCONNUE",
     "MOYENNE",
     "ORDRE",
+    "OUTILS_OPTIONNELS",
     "Constat",
     "Politique",
     "annotation",
@@ -268,6 +269,16 @@ def lire_hadolint(charge: object) -> list[Constat]:
     return constats
 
 
+# Seuls ces trois outils peuvent legitimement ne pas tourner : la detection les
+# saute faute de Python, de Dockerfile ou d'infrastructure a analyser. Les
+# autres tournent sur n'importe quel depot.
+#
+# La distinction compte parce qu'un outil declare non applicable n'est pas lu du
+# tout : nommer « gitleaks » par erreur ferait disparaitre tous les secrets
+# trouves, en silence et avec un job vert. La liste est donc fermee, et tout
+# nom hors de cette liste est traite comme un bug de l'action.
+OUTILS_OPTIONNELS: Final[frozenset[str]] = frozenset({"bandit", "checkov", "hadolint"})
+
 LECTEURS: Final[dict[str, Callable[[Any], list[Constat]]]] = {
     "gitleaks": lire_gitleaks,
     "semgrep": lire_semgrep,
@@ -293,6 +304,13 @@ def collecter(
     Dockerfile, et un avertissement qui se déclenche toujours cesse d'être lu.
     """
     ignores = non_applicables or set()
+    if not ignores <= OUTILS_OPTIONNELS:
+        inattendus = ", ".join(sorted(ignores - OUTILS_OPTIONNELS))
+        raise ValueError(
+            f"outils declares non applicables hors de la liste fermee : {inattendus}. "
+            "Un outil non lu ne produit aucun constat, donc l'erreur serait invisible."
+        )
+
     constats: list[Constat] = []
     muets: list[str] = []
     for outil, lecteur in LECTEURS.items():
@@ -387,7 +405,11 @@ def main(argv: list[str] | None = None) -> int:
     arguments = analyseur.parse_args(argv)
 
     ignores = {o.strip() for o in arguments.non_applicables.split(",") if o.strip()}
-    constats, muets = collecter(arguments.rapports, ignores)
+    try:
+        constats, muets = collecter(arguments.rapports, ignores)
+    except ValueError as exc:
+        print(f"::error title=Detection incoherente::{exc}")
+        return 1
     politique = Politique.charger(arguments.politique)
     bloquants, autres = politique.trier(constats)
 
