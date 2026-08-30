@@ -13,57 +13,22 @@
 # du ruleset, c'est l'entrée `mode: observation` de l'action, qui rend le job
 # incapable d'échouer.
 #
+# Pour ajouter un controle a un ruleset DEJA cree, ne pas relancer ce script :
+# il echouerait sur un doublon de nom. Utiliser ./scripts/maj-ruleset.sh.
+#
 # Usage :
 #   ./scripts/creer-ruleset.sh              # crée en mode evaluate
 #   DRY_RUN=1 ./scripts/creer-ruleset.sh    # affiche la charge utile sans créer
 
 set -euo pipefail
 
-ORG="Baseline-quebec"
-DEPOT_SOURCE_ID="1333554887" # Baseline-quebec/.github
-REF="refs/tags/v1"
-NOM_RULESET="Conformité Baseline"
+# shellcheck source=scripts/ruleset-commun.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ruleset-commun.sh"
 
-# tracking-llm-discontinued est exclu, et l'exclusion n'est pas cosmétique :
-# son registre contient l'identifiant de chaque modèle déprécié connu, donc y
-# lancer le scanner produit une issue par modèle. Constaté en production, 182
-# issues en une exécution.
-
-charge_utile=$(
-  cat <<JSON
-{
-  "name": "${NOM_RULESET}",
-  "target": "branch",
-  "enforcement": "evaluate",
-  "conditions": {
-    "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] },
-    "repository_name": { "include": ["~ALL"], "exclude": ["tracking-llm-discontinued"] }
-  },
-  "rules": [
-    {
-      "type": "workflows",
-      "parameters": {
-        "workflows": [
-          {
-            "repository_id": ${DEPOT_SOURCE_ID},
-            "path": ".github/workflows/licence-scan.yml",
-            "ref": "${REF}"
-          },
-          {
-            "repository_id": ${DEPOT_SOURCE_ID},
-            "path": ".github/workflows/llm-scan.yml",
-            "ref": "${REF}"
-          }
-        ]
-      }
-    }
-  ]
-}
-JSON
-)
+charge_utile=$(charge_ruleset evaluate)
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
-  echo "$charge_utile"
+  echo "$charge_utile" | jq '.'
   exit 0
 fi
 
@@ -72,7 +37,7 @@ echo "$charge_utile" | gh api -X POST "orgs/${ORG}/rulesets" --input - --jq '{id
 
 echo
 echo "Fait. Attention : en mode evaluate le scan ne s'execute PAS du tout."
-echo "Lancer ./scripts/activer-ruleset.sh pour qu'il tourne. L'action reste"
+echo "Lancer ./scripts/activer-ruleset.sh pour qu'il tourne. Les actions restent"
 echo "en mode observation, donc rien ne peut bloquer une pull request."
 echo "Vérifier les exécutions dans quelques jours :"
 echo "  gh api orgs/${ORG}/rulesets --jq '.[] | {id, name, enforcement}'"
