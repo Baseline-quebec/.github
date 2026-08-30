@@ -7,6 +7,10 @@ destiné à être copié dans un dépôt : le principe est justement qu'il n'y a
 
 ## Ce qui est imposé
 
+Le périmètre est « tous les dépôts sauf `tracking-llm-discontinued`,
+`Marketing` et `Ventes` », déclaré dans `scripts/ruleset-commun.sh` et vérifié
+par un test.
+
 | Contrôle | Fichier | Déclenchement | Portée |
 |---|---|---|---|
 | Conformité des licences | `.github/workflows/licence-scan.yml` | Pull request, merge queue | Tous les dépôts ciblés |
@@ -340,9 +344,17 @@ gh auth refresh -h github.com -s admin:org   # une seule fois, plus l'autorisati
 ### Ajouter un contrôle à un ruleset déjà créé
 
 Ne pas relancer `creer-ruleset.sh`, qui échouerait sur un doublon de nom. La
-liste des workflows imposés vit dans `scripts/ruleset-commun.sh`, partagée
-entre création et mise à jour pour qu'un contrôle ajouté d'un côté ne manque
-jamais de l'autre.
+liste des workflows imposés **et le périmètre** vivent dans
+`scripts/ruleset-commun.sh`, partagés entre création et mise à jour pour qu'un
+contrôle ajouté d'un côté ne manque jamais de l'autre.
+
+`maj-ruleset.sh` n'envoie que `rules` : les champs omis d'un PUT de ruleset
+sont laissés tels quels par GitHub, donc ce script ne peut pas écraser le
+périmètre au passage. Il compare quand même les exclusions réelles à celles
+déclarées et **avertit en cas de dérive** : c'est le seul moment où quelqu'un
+regarde les deux côtés. Cette dérive a déjà existé — `Marketing` et `Ventes`
+étaient exclus en production sans que le script les nomme, si bien qu'une
+reconstruction après incident aurait réimposé les scans sur ces deux dépôts.
 
 **L'ordre compte.** Le ruleset référence les workflows par le tag `v1` : le
 mettre à jour avant d'avoir déplacé le tag le ferait pointer vers un fichier

@@ -8,10 +8,29 @@
 # quelqu'un ajoute un controle a une seule des deux, le ruleset recree apres un
 # incident perdrait silencieusement un controle.
 
+# shellcheck disable=SC2034  # ORG et NOM_RULESET sont lus par les scripts qui sourcent ce fichier.
 ORG="Baseline-quebec"
 DEPOT_SOURCE_ID="1333554887" # Baseline-quebec/.github
 REF="refs/tags/v1"
 NOM_RULESET="Conformité Baseline"
+
+# Depots hors perimetre.
+#
+# tracking-llm-discontinued : son registre contient l'identifiant de chaque
+# modele deprecie connu, donc y lancer le scanner de modeles revient a lui faire
+# scanner sa propre liste. Constate en production, 182 issues en une execution.
+#
+# Marketing et Ventes : depots de travail, majoritairement du HTML de sites et
+# de presentations (17 Mo et 7 Mo respectivement), pas du code livre. Ils
+# etaient deja exclus du ruleset en production alors que ce script ne les
+# nommait pas : le script aurait donc reconstruit un perimetre PLUS large que
+# le vrai apres un incident. C'est exactement le genre d'ecart qu'un fichier
+# cense etre la source de verite ne doit pas porter.
+EXCLUS=(
+  "tracking-llm-discontinued"
+  "Marketing"
+  "Ventes"
+)
 
 # Workflows imposes a tous les depots cibles, par chemin dans ce depot-ci.
 WORKFLOWS=(
@@ -36,26 +55,28 @@ regles_workflows() {
     '[{type: "workflows", parameters: {workflows: $w}}]'
 }
 
+# Emet l'objet `conditions` du ruleset : le perimetre, exclusions comprises.
+conditions_ruleset() {
+  jq -nc --argjson exclus "$(printf '%s\n' "${EXCLUS[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')" \
+    '{
+      ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] },
+      repository_name: { include: ["~ALL"], exclude: $exclus }
+    }'
+}
+
 # Emet la charge utile complete de creation du ruleset.
-#
-# tracking-llm-discontinued est exclu, et l'exclusion n'est pas cosmetique :
-# son registre contient l'identifiant de chaque modele deprecie connu, donc y
-# lancer le scanner produit une issue par modele. Constate en production, 182
-# issues en une execution.
 charge_ruleset() {
   local enforcement="${1:-evaluate}"
   jq -nc \
     --arg name "$NOM_RULESET" \
     --arg enforcement "$enforcement" \
+    --argjson conditions "$(conditions_ruleset)" \
     --argjson rules "$(regles_workflows)" \
     '{
       name: $name,
       target: "branch",
       enforcement: $enforcement,
-      conditions: {
-        ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] },
-        repository_name: { include: ["~ALL"], exclude: ["tracking-llm-discontinued"] }
-      },
+      conditions: $conditions,
       rules: $rules
     }'
 }

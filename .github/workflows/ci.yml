@@ -21,10 +21,10 @@ jobs:
           enable-cache: true
 
       - name: Ruff
-        run: uv run --no-project --with ruff ruff check actions/
+        run: uv run --no-project --with ruff ruff check actions/ scripts/
 
       - name: Format
-        run: uv run --no-project --with ruff ruff format --check actions/
+        run: uv run --no-project --with ruff ruff format --check actions/ scripts/
 
       # Chaque action est testée depuis son propre dossier : les scripts sont
       # appelés en ligne de commande depuis un workflow, jamais importés comme
@@ -48,6 +48,13 @@ jobs:
             (cd "$dossier" && uv run --no-project --with pyyaml --with pytest python -m pytest -q)
             echo "::endgroup::"
           done
+
+      # Les scripts de ruleset decident du perimetre impose a l'organisation.
+      # Ils avaient deja derive du ruleset reel sans que rien ne le signale.
+      - name: Tests des scripts
+        run: |
+          set -euo pipefail
+          cd scripts && uv run --no-project --with pytest python -m pytest -q
 
   # Exerce les actions de securite de bout en bout, sur ce depot-ci, par leur
   # chemin local. C'est la seule facon de les tester avant que le tag v1 ne les
