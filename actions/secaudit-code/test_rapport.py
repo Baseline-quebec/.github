@@ -444,7 +444,7 @@ def test_mode_bloquant_fait_echouer_le_job(tmp_path: Path) -> None:
 
 
 def test_mode_observation_ne_bloque_jamais(tmp_path: Path) -> None:
-    """C'est ce qui rend le deploiement sur 82 depots sur : rien ne peut bloquer."""
+    """C'est ce qui rend le deploiement sur toute l'organisation sur."""
     ecrire_constat_bloquant(tmp_path)
     code = main(
         ["--rapports", str(tmp_path), "--politique", str(RACINE_POLITIQUE), "--sans-blocage"]

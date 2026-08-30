@@ -99,6 +99,12 @@ Chaque dépôt est scanné par un job de matrice qui réutilise **exactement la 
 action** que les pull requests. Le rapport périodique et le blocage en PR ne
 peuvent donc pas diverger : une seule politique, un seul extracteur.
 
+Les deux balayages tournent en matrice, un job par dépôt. GitHub refuse une
+matrice de plus de **256 jobs** ; l'organisation en compte 120 actifs, et
+`sweep.py` avertit à 230 puis refuse au-delà de 256. Franchir la limite sans
+prévenir ferait échouer le balayage entier, avec un message d'erreur GitHub qui
+ne dit pas quoi faire.
+
 L'énumération des dépôts et l'envoi à Windmill sont communs aux deux balayages
 et vivent dans `actions/sweep/sweep.py`. Chaque balayage ne garde que son
 agrégation, dans le dossier de son action, avec ses tests. Les deux moitiés se
@@ -148,7 +154,8 @@ l'idée qu'un canal silencieux est ambigu.
 ## Pourquoi un ruleset plutôt que le cookiecutter
 
 Le cookiecutter ne couvre que les nouveaux dépôts et ne rattrape jamais les
-82 dépôts existants. Un ruleset organisationnel s'applique immédiatement à
+120 dépôts actifs (mesurés le 2026-08-30 ; l'organisation en compte 180 en
+comptant les archivés). Un ruleset organisationnel s'applique immédiatement à
 tous, y compris aux dépôts créés demain, sans dépendre de la discipline de qui
 que ce soit. Changer la politique se fait ici, à un seul endroit, et les dépôts
 suivent au déplacement du tag `v1`.

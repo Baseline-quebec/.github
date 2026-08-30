@@ -16,7 +16,15 @@ from typing import Any
 
 import pytest
 import sweep
-from sweep import envoyer, lire_resume, lister_depots, main, windmill_configure
+from sweep import (
+    MAX_MATRICE,
+    SEUIL_ALERTE_MATRICE,
+    envoyer,
+    lire_resume,
+    lister_depots,
+    main,
+    windmill_configure,
+)
 
 
 class FauxResultat:
@@ -63,7 +71,7 @@ def test_echec_de_gh_rend_une_liste_vide(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_delai_depasse_ne_remonte_pas_de_trace_de_pile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """La pagination sur 80 depots peut deborder un jour de lenteur de l'API.
+    """La pagination sur une centaine de depots peut deborder un jour de lenteur.
 
     Une exception non capturee donnerait une trace de pile a la place du message
     qui dit quoi faire, et le job echouerait sans diagnostic.
@@ -113,6 +121,51 @@ def test_exclusion_est_decoupee_sur_les_virgules(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(sweep, "lister_depots", lambda exclus: recus.append(exclus) or ["org/a"])
     main(["lister", "--exclure", " .github , tracking , "])
     assert recus == [{".github", "tracking"}]
+
+
+def test_matrice_trop_grande_arrete_le_balayage(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """GitHub refuse une matrice de plus de 256 jobs.
+
+    Franchir la limite ferait echouer le balayage entier, avec un message qui
+    ne dit pas quoi faire. Le dire nous-memes laisse le temps de decouper.
+    """
+    trop = [f"org/depot{i}" for i in range(MAX_MATRICE + 1)]
+    monkeypatch.setattr(sweep, "lister_depots", lambda exclus: trop)
+    assert main(["lister"]) == 1
+    assert "Matrice trop grande" in capsys.readouterr().out
+
+
+def test_matrice_a_la_limite_exacte_passe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """256 est accepte, 257 non : la limite est inclusive."""
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "sortie"))
+    pile = [f"org/depot{i}" for i in range(MAX_MATRICE)]
+    monkeypatch.setattr(sweep, "lister_depots", lambda exclus: pile)
+    assert main(["lister"]) == 0
+    assert "Matrice trop grande" not in capsys.readouterr().out
+
+
+def test_matrice_proche_de_la_limite_avertit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "sortie"))
+    presque = [f"org/depot{i}" for i in range(SEUIL_ALERTE_MATRICE)]
+    monkeypatch.setattr(sweep, "lister_depots", lambda exclus: presque)
+    assert main(["lister"]) == 0
+    assert "Matrice bientot pleine" in capsys.readouterr().out
+
+
+def test_taille_courante_ne_declenche_aucune_alerte(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """L'organisation compte 120 depots actifs : le seuil ne doit pas crier tout de suite."""
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "sortie"))
+    monkeypatch.setattr(sweep, "lister_depots", lambda exclus: [f"org/d{i}" for i in range(120)])
+    assert main(["lister"]) == 0
+    assert "::warning" not in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------

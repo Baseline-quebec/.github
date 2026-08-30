@@ -34,6 +34,13 @@ DELAI_GH = 60
 DELAI_WINDMILL = 30
 TAILLE_PAGE = 100
 
+# GitHub refuse une matrice de plus de 256 jobs. L'organisation en compte 120
+# actifs aujourd'hui, mais elle grossit : franchir la limite ferait echouer le
+# balayage entier d'un coup, et le message d'erreur de GitHub ne dit pas quoi
+# faire. Avertir avant permet de decouper la matrice a temps.
+MAX_MATRICE = 256
+SEUIL_ALERTE_MATRICE = 230
+
 
 def lister_depots(exclus: set[str]) -> list[str]:
     """Liste les dépôts que l'installation de la GitHub App peut atteindre.
@@ -60,7 +67,7 @@ def lister_depots(exclus: set[str]) -> list[str]:
             timeout=DELAI_GH,
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
-        # La pagination sur 80 dépôts peut deborder le delai un jour de lenteur
+        # La pagination sur une centaine de dépôts peut deborder le delai un jour
         # de l'API. Laisser remonter l'exception donnerait une trace de pile a
         # la place du message qui dit quoi faire.
         logger.error("Énumération interrompue : %s", exc)
@@ -169,6 +176,18 @@ def main(argv: list[str] | None = None) -> int:
             # sans dépôt et le rapport annoncerait fièrement zéro problème.
             print("::error title=Aucun depot::Aucun depot listable, verifier l'autorisation SSO.")
             return 1
+        if len(depots) > MAX_MATRICE:
+            print(
+                f"::error title=Matrice trop grande::{len(depots)} depots pour un maximum "
+                f"de {MAX_MATRICE}. Decouper le balayage, sinon il n'analyse plus rien."
+            )
+            return 1
+        if len(depots) >= SEUIL_ALERTE_MATRICE:
+            print(
+                f"::warning title=Matrice bientot pleine::{len(depots)} depots, "
+                f"limite GitHub a {MAX_MATRICE}."
+            )
+
         sortie = os.environ.get("GITHUB_OUTPUT")
         if sortie:
             with Path(sortie).open("a", encoding="utf-8") as fichier:
