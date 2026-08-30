@@ -46,44 +46,18 @@ runs:
         mkdir -p "$RAPPORTS"
         echo "dossier=$RAPPORTS" >> "$GITHUB_OUTPUT"
 
+    # La detection vit dans un script a part parce qu'elle decide quels outils
+    # tournent : une erreur ici ne casse rien de visible, elle fait juste
+    # silencieusement sauter un scanner. Dans un bloc `run:` elle etait
+    # intestable.
     - name: Détecter ce qu'il y a à analyser
       id: detection
       shell: bash
-      working-directory: ${{ inputs.chemin }}
+      env:
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
-
-        # -prune sur les dossiers de dépendances : le code d'un tiers n'est pas
-        # le nôtre, et un node_modules fait exploser le temps de scan sans
-        # produire un seul constat sur lequel on puisse agir.
-        chercher() {
-          find . \
-            \( -name .git -o -name node_modules -o -name .venv -o -name venv \
-               -o -name vendor -o -name dist -o -name build \) -prune -o \
-            "$@" -print 2>/dev/null | head -1
-        }
-
-        python=non
-        [ -n "$(chercher -name '*.py' -type f)" ] && python=oui
-
-        docker=non
-        [ -n "$(chercher -name 'Dockerfile*' -type f)" ] && docker=oui
-
-        # checkov ne tourne que s'il y a de l'infrastructure décrite en fichiers.
-        # Le lancer sur un dépôt qui n'a qu'un workflow GitHub produit surtout du
-        # bruit, et un gate bruyant finit ignoré.
-        iac=non
-        for motif in '*.tf' '*.tf.json' '*.bicep' 'docker-compose*.y*ml' 'Chart.yaml'; do
-          if [ -n "$(chercher -name "$motif" -type f)" ]; then iac=oui; break; fi
-        done
-        [ "$docker" = oui ] && iac=oui
-
-        {
-          echo "python=$python"
-          echo "docker=$docker"
-          echo "iac=$iac"
-        } >> "$GITHUB_OUTPUT"
-        echo "Python : $python | Dockerfile : $docker | IaC : $iac"
+        bash "$ACTION_PATH/detecter.sh" "${{ inputs.chemin }}" | tee -a "$GITHUB_OUTPUT"
 
     - name: Installer uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -195,6 +169,9 @@ runs:
         # Les outils sautes par la detection sont declares tels quels : sans
         # cela, tout depot sans Dockerfile serait accuse d'avoir un scanner
         # muet, et un avertissement qui se declenche toujours cesse d'etre lu.
+        # Ces trois-la seulement : rapport.py refuse tout autre nom, parce
+        # qu'un outil declare non applicable n'est pas lu du tout et qu'une
+        # erreur ici serait donc invisible.
         non_applicables=""
         [ "$PYTHON" = oui ] || non_applicables="${non_applicables}bandit,"
         [ "$IAC" = oui ] || non_applicables="${non_applicables}checkov,"

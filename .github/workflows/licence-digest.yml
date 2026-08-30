@@ -64,7 +64,7 @@ jobs:
     needs: lister
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Un depot dont l'installation casse ne doit pas annuler les 81 autres, et
+    # Un depot dont l'installation casse ne doit pas annuler les autres, et
     # ne doit pas non plus faire echouer le rapport : il sera simplement absent
     # du total analyse, ce que le message rend visible.
     continue-on-error: true

@@ -21,22 +21,40 @@ jobs:
           enable-cache: true
 
       - name: Ruff
-        run: uv run --no-project --with ruff ruff check actions/
+        run: uv run --no-project --with ruff ruff check actions/ scripts/
 
       - name: Format
-        run: uv run --no-project --with ruff ruff format --check actions/
+        run: uv run --no-project --with ruff ruff format --check actions/ scripts/
 
       # Chaque action est testée depuis son propre dossier : les scripts sont
       # appelés en ligne de commande depuis un workflow, jamais importés comme
       # un paquet, et les tests reproduisent cette façon de les charger.
+      #
+      # Le dossier est découvert, pas énuméré : une liste en dur avait déjà
+      # laissé actions/sweep hors de la CI, c'est-à-dire un module partagé par
+      # les deux balayages dont les tests ne tournaient jamais.
       - name: Tests
+        shell: bash
         run: |
           set -euo pipefail
-          for dossier in actions/commun actions/licence-scan actions/secaudit-code actions/cve-scan; do
+          for dossier in actions/*/; do
+            # Un dossier d'action sans test est une regression a part entiere :
+            # il passerait la CI en silence.
+            if ! compgen -G "$dossier/test_*.py" > /dev/null; then
+              echo "::error title=Aucun test::$dossier ne contient aucun fichier test_*.py"
+              exit 1
+            fi
             echo "::group::$dossier"
             (cd "$dossier" && uv run --no-project --with pyyaml --with pytest python -m pytest -q)
             echo "::endgroup::"
           done
+
+      # Les scripts de ruleset decident du perimetre impose a l'organisation.
+      # Ils avaient deja derive du ruleset reel sans que rien ne le signale.
+      - name: Tests des scripts
+        run: |
+          set -euo pipefail
+          cd scripts && uv run --no-project --with pytest python -m pytest -q
 
   # Exerce les actions de securite de bout en bout, sur ce depot-ci, par leur
   # chemin local. C'est la seule facon de les tester avant que le tag v1 ne les

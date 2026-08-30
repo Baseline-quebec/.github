@@ -46,8 +46,10 @@ __all__ = [
     "INCONNUE",
     "MOYENNE",
     "ORDRE",
+    "OUTILS_OPTIONNELS",
     "Constat",
     "Politique",
+    "annotation",
     "collecter",
     "normaliser_severite",
     "resumer",
@@ -267,6 +269,16 @@ def lire_hadolint(charge: object) -> list[Constat]:
     return constats
 
 
+# Seuls ces trois outils peuvent legitimement ne pas tourner : la detection les
+# saute faute de Python, de Dockerfile ou d'infrastructure a analyser. Les
+# autres tournent sur n'importe quel depot.
+#
+# La distinction compte parce qu'un outil declare non applicable n'est pas lu du
+# tout : nommer « gitleaks » par erreur ferait disparaitre tous les secrets
+# trouves, en silence et avec un job vert. La liste est donc fermee, et tout
+# nom hors de cette liste est traite comme un bug de l'action.
+OUTILS_OPTIONNELS: Final[frozenset[str]] = frozenset({"bandit", "checkov", "hadolint"})
+
 LECTEURS: Final[dict[str, Callable[[Any], list[Constat]]]] = {
     "gitleaks": lire_gitleaks,
     "semgrep": lire_semgrep,
@@ -292,6 +304,13 @@ def collecter(
     Dockerfile, et un avertissement qui se déclenche toujours cesse d'être lu.
     """
     ignores = non_applicables or set()
+    if not ignores <= OUTILS_OPTIONNELS:
+        inattendus = ", ".join(sorted(ignores - OUTILS_OPTIONNELS))
+        raise ValueError(
+            f"outils declares non applicables hors de la liste fermee : {inattendus}. "
+            "Un outil non lu ne produit aucun constat, donc l'erreur serait invisible."
+        )
+
     constats: list[Constat] = []
     muets: list[str] = []
     for outil, lecteur in LECTEURS.items():
@@ -339,6 +358,25 @@ def resumer(bloquants: list[Constat], autres: list[Constat], muets: list[str]) -
     return "\n".join(lignes) + "\n"
 
 
+def annotation(constat: Constat) -> str:
+    """Compose l'annotation GitHub qui epingle le constat dans le diff.
+
+    Les proprietes sont assemblees et non concatenees a l'aveugle : un constat
+    sans fichier produisait « ::error ,title=… », que GitHub affiche mal. Une
+    ligne 0 est omise aussi, les annotations etant numerotees a partir de 1.
+    """
+    proprietes = []
+    if constat.fichier:
+        proprietes.append(f"file={constat.fichier}")
+        if constat.ligne > 0:
+            proprietes.append(f"line={constat.ligne}")
+    proprietes.append(f"title={constat.outil} {constat.regle}")
+    # Les retours a la ligne coupent l'annotation : GitHub ne lit que la
+    # premiere ligne et le reste s'affiche comme du texte brut.
+    message = constat.message.replace("\n", " ").strip()
+    return f"::error {','.join(proprietes)}::{message}"
+
+
 def ecrire_sortie(nom: str, valeur: str) -> None:
     """Écrit une sortie d'action si le job en fournit le canal."""
     fichier = os.environ.get("GITHUB_OUTPUT")
@@ -367,7 +405,11 @@ def main(argv: list[str] | None = None) -> int:
     arguments = analyseur.parse_args(argv)
 
     ignores = {o.strip() for o in arguments.non_applicables.split(",") if o.strip()}
-    constats, muets = collecter(arguments.rapports, ignores)
+    try:
+        constats, muets = collecter(arguments.rapports, ignores)
+    except ValueError as exc:
+        print(f"::error title=Detection incoherente::{exc}")
+        return 1
     politique = Politique.charger(arguments.politique)
     bloquants, autres = politique.trier(constats)
 
@@ -396,8 +438,7 @@ def main(argv: list[str] | None = None) -> int:
     ecrire_sortie("bloquants", str(len(bloquants)))
 
     for constat in bloquants:
-        emplacement = f"file={constat.fichier},line={constat.ligne}" if constat.fichier else ""
-        print(f"::error {emplacement},title={constat.outil} {constat.regle}::{constat.message}")
+        print(annotation(constat))
 
     if bloquants and not arguments.sans_blocage:
         return 1

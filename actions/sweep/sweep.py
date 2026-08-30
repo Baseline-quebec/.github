@@ -34,6 +34,13 @@ DELAI_GH = 60
 DELAI_WINDMILL = 30
 TAILLE_PAGE = 100
 
+# GitHub refuse une matrice de plus de 256 jobs. L'organisation en compte 120
+# actifs aujourd'hui, mais elle grossit : franchir la limite ferait echouer le
+# balayage entier d'un coup, et le message d'erreur de GitHub ne dit pas quoi
+# faire. Avertir avant permet de decouper la matrice a temps.
+MAX_MATRICE = 256
+SEUIL_ALERTE_MATRICE = 230
+
 
 def lister_depots(exclus: set[str]) -> list[str]:
     """Liste les dépôts que l'installation de la GitHub App peut atteindre.
@@ -44,20 +51,28 @@ def lister_depots(exclus: set[str]) -> list[str]:
     que l'App a le droit de toucher, ce qui est aussi la définition honnête du
     périmètre du rapport.
     """
-    resultat = subprocess.run(
-        [
-            "gh",
-            "api",
-            "--paginate",
-            f"/installation/repositories?per_page={TAILLE_PAGE}",
-            "--jq",
-            ".repositories[] | select(.archived == false) | .full_name",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=DELAI_GH,
-    )
+    try:
+        resultat = subprocess.run(
+            [
+                "gh",
+                "api",
+                "--paginate",
+                f"/installation/repositories?per_page={TAILLE_PAGE}",
+                "--jq",
+                ".repositories[] | select(.archived == false) | .full_name",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DELAI_GH,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        # La pagination sur une centaine de dépôts peut deborder le delai un jour
+        # de l'API. Laisser remonter l'exception donnerait une trace de pile a
+        # la place du message qui dit quoi faire.
+        logger.error("Énumération interrompue : %s", exc)
+        return []
+
     if resultat.returncode != 0:
         logger.error("Impossible de lister les dépôts : %s", resultat.stderr.strip())
         return []
@@ -102,6 +117,19 @@ def envoyer(type_rapport: str, depots: list[dict[str, Any]], analyses: int) -> b
     return False
 
 
+def windmill_configure() -> bool:
+    """Dit si l'envoi Slack est configuré.
+
+    Sépare deux situations que le code confondait : un envoi volontairement
+    sauté faute de configuration, et un envoi tenté qui a échoué. La première
+    est normale, la seconde perd le rapport et doit faire échouer le job.
+    """
+    return bool(
+        os.environ.get("WINDMILL_WEBHOOK_URL", "").strip()
+        and os.environ.get("WINDMILL_TOKEN", "").strip()
+    )
+
+
 def lire_resume(fichier: Path) -> tuple[list[dict[str, Any]], int]:
     """Lit le résumé produit par l'agrégation propre à un balayage.
 
@@ -109,9 +137,18 @@ def lire_resume(fichier: Path) -> tuple[list[dict[str, Any]], int]:
     signaler » mensonger est pire qu'un rapport manquant, parce qu'il se lit
     comme une preuve de conformité.
     """
-    contenu: dict[str, Any] = json.loads(fichier.read_text(encoding="utf-8"))
-    depots = list(contenu.get("depots") or [])
-    return depots, int(contenu.get("total_analyses") or 0)
+    contenu = json.loads(fichier.read_text(encoding="utf-8"))
+    if not isinstance(contenu, dict):
+        raise ValueError("le résumé doit être un objet JSON")
+
+    depots = contenu.get("depots") or []
+    if not isinstance(depots, list):
+        # `list()` sur un dictionnaire rendrait ses clés, sur une chaîne ses
+        # caractères : dans les deux cas un rapport absurde partirait dans Slack
+        # sans que rien ne signale l'anomalie.
+        raise ValueError("« depots » doit être une liste")
+
+    return [d for d in depots if isinstance(d, dict)], int(contenu.get("total_analyses") or 0)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -139,6 +176,18 @@ def main(argv: list[str] | None = None) -> int:
             # sans dépôt et le rapport annoncerait fièrement zéro problème.
             print("::error title=Aucun depot::Aucun depot listable, verifier l'autorisation SSO.")
             return 1
+        if len(depots) > MAX_MATRICE:
+            print(
+                f"::error title=Matrice trop grande::{len(depots)} depots pour un maximum "
+                f"de {MAX_MATRICE}. Decouper le balayage, sinon il n'analyse plus rien."
+            )
+            return 1
+        if len(depots) >= SEUIL_ALERTE_MATRICE:
+            print(
+                f"::warning title=Matrice bientot pleine::{len(depots)} depots, "
+                f"limite GitHub a {MAX_MATRICE}."
+            )
+
         sortie = os.environ.get("GITHUB_OUTPUT")
         if sortie:
             with Path(sortie).open("a", encoding="utf-8") as fichier:
@@ -148,11 +197,24 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         depots, analyses = lire_resume(arguments.fichier)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError, ValueError) as exc:
         print(f"::error title=Resume illisible::{arguments.fichier} : {exc}")
         return 1
 
-    envoyer(arguments.type_rapport, depots, analyses)
+    if not windmill_configure():
+        logger.info("Windmill non configuré, rapport Slack sauté")
+        return 0
+
+    if not envoyer(arguments.type_rapport, depots, analyses):
+        # Windmill est configuré et l'envoi a quand même echoué : le rapport
+        # n'est arrivé à personne. Terminer en succès rendrait cette perte
+        # invisible, alors que tout ce depot est construit sur l'idee qu'un
+        # canal silencieux est ambigu.
+        print(
+            "::error title=Rapport non envoye::"
+            f"Le rapport « {arguments.type_rapport} » n'a pas atteint Slack."
+        )
+        return 1
     return 0
 
 

@@ -7,6 +7,10 @@ destiné à être copié dans un dépôt : le principe est justement qu'il n'y a
 
 ## Ce qui est imposé
 
+Le périmètre est « tous les dépôts sauf `tracking-llm-discontinued`,
+`Marketing` et `Ventes` », déclaré dans `scripts/ruleset-commun.sh` et vérifié
+par un test.
+
 | Contrôle | Fichier | Déclenchement | Portée |
 |---|---|---|---|
 | Conformité des licences | `.github/workflows/licence-scan.yml` | Pull request, merge queue | Tous les dépôts ciblés |
@@ -49,6 +53,18 @@ cinq autres. Son silence est signalé comme tel dans le rapport, jamais compté
 comme une absence de constat ; un scanner cassé ressemble exactement à un dépôt
 propre.
 
+Trois outils seulement peuvent légitimement ne pas tourner : bandit, checkov et
+hadolint, que la détection saute faute de Python, d'infrastructure ou de
+Dockerfile. La liste est **fermée** et l'action échoue si elle en nomme un
+autre. Un outil déclaré non applicable n'est pas lu du tout : nommer
+« gitleaks » par erreur ferait disparaître tous les secrets trouvés, en silence
+et avec un job vert.
+
+La détection vit dans `actions/secaudit-code/detecter.sh` plutôt que dans un
+bloc `run:`, précisément pour être testable. Une racine inexistante y est une
+erreur, pas un « rien à analyser » : l'audit passerait au vert sans avoir rien
+scanné.
+
 ### Vulnérabilités des dépendances
 
 `actions/cve-scan` confronte les fichiers de verrouillage à la base OSV et
@@ -82,6 +98,12 @@ tout ne se lit plus, donc ne sert plus.
 Chaque dépôt est scanné par un job de matrice qui réutilise **exactement la même
 action** que les pull requests. Le rapport périodique et le blocage en PR ne
 peuvent donc pas diverger : une seule politique, un seul extracteur.
+
+Les deux balayages tournent en matrice, un job par dépôt. GitHub refuse une
+matrice de plus de **256 jobs** ; l'organisation en compte 120 actifs, et
+`sweep.py` avertit à 230 puis refuse au-delà de 256. Franchir la limite sans
+prévenir ferait échouer le balayage entier, avec un message d'erreur GitHub qui
+ne dit pas quoi faire.
 
 L'énumération des dépôts et l'envoi à Windmill sont communs aux deux balayages
 et vivent dans `actions/sweep/sweep.py`. Chaque balayage ne garde que son
@@ -123,10 +145,17 @@ Pour l'envoi, la variable `WINDMILL_RAPPORT_CONFORMITE_URL` et le secret
 `WINDMILL_TOKEN`. Sans eux, le balayage tourne et le rapport est simplement
 sauté.
 
+En revanche, si Windmill **est** configuré et que l'envoi échoue quand même,
+le job échoue. Les deux situations se ressemblent dans les journaux mais n'ont
+rien à voir : la première est un choix, la seconde perd le rapport. Terminer en
+succès rendrait cette perte invisible, alors que tout ce dépôt repose sur
+l'idée qu'un canal silencieux est ambigu.
+
 ## Pourquoi un ruleset plutôt que le cookiecutter
 
 Le cookiecutter ne couvre que les nouveaux dépôts et ne rattrape jamais les
-82 dépôts existants. Un ruleset organisationnel s'applique immédiatement à
+120 dépôts actifs (mesurés le 2026-08-30 ; l'organisation en compte 180 en
+comptant les archivés). Un ruleset organisationnel s'applique immédiatement à
 tous, y compris aux dépôts créés demain, sans dépendre de la discipline de qui
 que ce soit. Changer la politique se fait ici, à un seul endroit, et les dépôts
 suivent au déplacement du tag `v1`.
@@ -334,9 +363,17 @@ gh auth refresh -h github.com -s admin:org   # une seule fois, plus l'autorisati
 ### Ajouter un contrôle à un ruleset déjà créé
 
 Ne pas relancer `creer-ruleset.sh`, qui échouerait sur un doublon de nom. La
-liste des workflows imposés vit dans `scripts/ruleset-commun.sh`, partagée
-entre création et mise à jour pour qu'un contrôle ajouté d'un côté ne manque
-jamais de l'autre.
+liste des workflows imposés **et le périmètre** vivent dans
+`scripts/ruleset-commun.sh`, partagés entre création et mise à jour pour qu'un
+contrôle ajouté d'un côté ne manque jamais de l'autre.
+
+`maj-ruleset.sh` n'envoie que `rules` : les champs omis d'un PUT de ruleset
+sont laissés tels quels par GitHub, donc ce script ne peut pas écraser le
+périmètre au passage. Il compare quand même les exclusions réelles à celles
+déclarées et **avertit en cas de dérive** : c'est le seul moment où quelqu'un
+regarde les deux côtés. Cette dérive a déjà existé — `Marketing` et `Ventes`
+étaient exclus en production sans que le script les nomme, si bien qu'une
+reconstruction après incident aurait réimposé les scans sur ces deux dépôts.
 
 **L'ordre compte.** Le ruleset référence les workflows par le tag `v1` : le
 mettre à jour avant d'avoir déplacé le tag le ferait pointer vers un fichier
@@ -356,8 +393,18 @@ Les scripts sont appelés en ligne de commande depuis une étape de workflow,
 jamais importés comme un paquet. Les tests se lancent donc depuis le dossier de
 l'action, ce qui reproduit la façon dont le script est réellement chargé.
 
+La CI découvre les dossiers au lieu de les énumérer, et **refuse** un dossier
+d'action sans fichier `test_*.py`. Une liste en dur avait déjà laissé
+`actions/sweep` hors de la CI : le module partagé par les deux balayages
+périodiques, dont les tests ne tournaient donc jamais.
+
+Le module partagé porte ses propres tests de contrat plutôt que de s'en
+remettre aux suites en aval. Vérifié par mutation : changer son seuil par
+défaut ou désamorcer l'expiration des exemptions ne faisait rougir aucun test
+de `actions/commun`, seulement ceux de `secaudit-code` et `cve-scan`.
+
 ```bash
-for dossier in actions/commun actions/licence-scan actions/secaudit-code actions/cve-scan; do
+for dossier in actions/*/; do
   (cd "$dossier" && uv run --no-project --with pyyaml --with pytest python -m pytest -q)
 done
 
