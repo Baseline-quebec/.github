@@ -104,7 +104,7 @@ runs:
           -v "$PWD/$SOURCE":/src:ro -v "$RAPPORTS":/out \
           ghcr.io/gitleaks/gitleaks:v8.30.1 \
           dir /src --report-format json --report-path /out/gitleaks.json --exit-code 0 \
-          >/dev/null 2>&1 || true
+          >>"$RAPPORTS/_outils.log" 2>&1 || true
 
     - name: Analyser le code (semgrep)
       shell: bash
@@ -114,7 +114,7 @@ runs:
       run: |
         set -uo pipefail
         uv run --no-project --with semgrep==1.175.0 semgrep scan \
-          --config auto --json --output "$RAPPORTS/semgrep.json" --quiet . || true
+          --config auto --json --output "$RAPPORTS/semgrep.json" --quiet . 2>>"$RAPPORTS/_outils.log" || true
 
     - name: Analyser le code Python (bandit)
       if: steps.detection.outputs.python == 'oui'
@@ -127,7 +127,7 @@ runs:
         uv run --no-project --with bandit==1.9.4 bandit \
           --recursive . \
           --exclude ./.venv,./venv,./node_modules,./build,./dist \
-          --format json --output "$RAPPORTS/bandit.json" || true
+          --format json --output "$RAPPORTS/bandit.json" 2>>"$RAPPORTS/_outils.log" || true
 
     # --scanners misconfig,secret : les vulnérabilités de dépendances sont la
     # charge de cve-scan, qui lit les fichiers de verrouillage. Les compter aux
@@ -145,7 +145,7 @@ runs:
           aquasec/trivy:0.74.0 filesystem \
           --scanners misconfig,secret --format json --output /out/trivy.json \
           --exit-code 0 --no-progress /src \
-          >/dev/null 2>&1 || true
+          >>"$RAPPORTS/_outils.log" 2>&1 || true
 
     - name: Analyser l'infrastructure (checkov)
       if: steps.detection.outputs.iac == 'oui'
@@ -157,7 +157,7 @@ runs:
         set -uo pipefail
         uv run --no-project --with checkov==3.3.16 checkov \
           --directory . --output json --quiet --compact \
-          > "$RAPPORTS/checkov.json" 2>/dev/null || true
+          > "$RAPPORTS/checkov.json" 2>>"$RAPPORTS/_outils.log" || true
 
     - name: Analyser les Dockerfiles (hadolint)
       if: steps.detection.outputs.docker == 'oui'
@@ -177,7 +177,7 @@ runs:
         # politique, pas a l'outil.
         docker run --rm -v "$PWD":/src:ro -w /src hadolint/hadolint:v2.15.1 \
           hadolint --format json --no-fail "${fichiers[@]}" \
-          > "$RAPPORTS/hadolint.json" 2>/dev/null || true
+          > "$RAPPORTS/hadolint.json" 2>>"$RAPPORTS/_outils.log" || true
 
     - name: Appliquer la politique
       id: politique
@@ -187,9 +187,21 @@ runs:
         RAPPORTS: ${{ steps.espace.outputs.dossier }}
         ACTION_PATH: ${{ github.action_path }}
         RAPPORT_JSON: ${{ inputs.rapport-json }}
+        PYTHON: ${{ steps.detection.outputs.python }}
+        DOCKER: ${{ steps.detection.outputs.docker }}
+        IAC: ${{ steps.detection.outputs.iac }}
       run: |
         set -euo pipefail
+        # Les outils sautes par la detection sont declares tels quels : sans
+        # cela, tout depot sans Dockerfile serait accuse d'avoir un scanner
+        # muet, et un avertissement qui se declenche toujours cesse d'etre lu.
+        non_applicables=""
+        [ "$PYTHON" = oui ] || non_applicables="${non_applicables}bandit,"
+        [ "$IAC" = oui ] || non_applicables="${non_applicables}checkov,"
+        [ "$DOCKER" = oui ] || non_applicables="${non_applicables}hadolint,"
+
         options=(--rapports "$RAPPORTS" --politique "$ACTION_PATH/politique.yaml")
+        options+=(--non-applicables "${non_applicables%,}")
         if [ "$MODE" != "bloquant" ]; then
           options+=(--sans-blocage)
         fi
@@ -197,3 +209,19 @@ runs:
           options+=(--sortie-json "$RAPPORT_JSON")
         fi
         uv run --no-project --with pyyaml python "$ACTION_PATH/rapport.py" "${options[@]}"
+
+    # Le journal des outils est publie meme quand l'etape precedente echoue :
+    # c'est exactement la que se trouve la raison d'un scanner muet, et sans
+    # elle le diagnostic recommence a zero.
+    - name: Publier le journal des outils
+      if: always()
+      shell: bash
+      env:
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+      run: |
+        set -uo pipefail
+        journal="$RAPPORTS/_outils.log"
+        [ -s "$journal" ] || exit 0
+        echo "::group::Sortie des outils"
+        tail -c 60000 "$journal"
+        echo "::endgroup::"

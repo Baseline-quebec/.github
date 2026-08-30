@@ -277,16 +277,26 @@ LECTEURS: Final[dict[str, Callable[[Any], list[Constat]]]] = {
 }
 
 
-def collecter(dossier: Path) -> tuple[list[Constat], list[str]]:
+def collecter(
+    dossier: Path, non_applicables: set[str] | None = None
+) -> tuple[list[Constat], list[str]]:
     """Lit les rapports présents dans le dossier et signale les outils muets.
 
     Le fichier attendu porte le nom de l'outil : `gitleaks.json`, `semgrep.json`.
     Un outil dont le fichier manque ou ne se parse pas est rendu visible plutôt
     que compté comme propre.
+
+    `non_applicables` liste les outils que la détection a délibérément sautés,
+    faute de Python, de Dockerfile ou d'infrastructure à analyser. Les confondre
+    avec les muets crierait au scanner cassé sur chaque dépôt qui n'a pas de
+    Dockerfile, et un avertissement qui se déclenche toujours cesse d'être lu.
     """
+    ignores = non_applicables or set()
     constats: list[Constat] = []
     muets: list[str] = []
     for outil, lecteur in LECTEURS.items():
+        if outil in ignores:
+            continue
         fichier = dossier / f"{outil}.json"
         if not fichier.is_file() or fichier.stat().st_size == 0:
             muets.append(outil)
@@ -343,6 +353,11 @@ def main(argv: list[str] | None = None) -> int:
     analyseur.add_argument("--rapports", type=Path, required=True)
     analyseur.add_argument("--politique", type=Path, required=True)
     analyseur.add_argument("--depot", default=os.environ.get("GITHUB_REPOSITORY", "inconnu"))
+    analyseur.add_argument(
+        "--non-applicables",
+        default="",
+        help="Outils sautes par la detection, separes par des virgules.",
+    )
     analyseur.add_argument("--sortie-json", type=Path, default=None)
     analyseur.add_argument(
         "--sans-blocage",
@@ -351,7 +366,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     arguments = analyseur.parse_args(argv)
 
-    constats, muets = collecter(arguments.rapports)
+    ignores = {o.strip() for o in arguments.non_applicables.split(",") if o.strip()}
+    constats, muets = collecter(arguments.rapports, ignores)
     politique = Politique.charger(arguments.politique)
     bloquants, autres = politique.trier(constats)
 
@@ -370,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
                     "bloquants": [c.en_dict() for c in bloquants],
                     "autres": [c.en_dict() for c in autres],
                     "muets": muets,
+                    "non_applicables": sorted(ignores),
                 },
                 ensure_ascii=False,
             ),

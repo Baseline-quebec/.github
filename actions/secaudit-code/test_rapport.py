@@ -241,6 +241,25 @@ def test_rapport_illisible_est_muet_et_ninterrompt_pas(tmp_path: Path) -> None:
     assert "semgrep" in muets
 
 
+def test_outil_non_applicable_nest_pas_signale_muet(tmp_path: Path) -> None:
+    """Un dépôt sans Dockerfile n'a pas un hadolint cassé, il n'a pas de Dockerfile.
+
+    Les confondre ferait crier au scanner muet sur presque tous les dépôts, et
+    un avertissement qui se déclenche toujours cesse d'être lu.
+    """
+    ecrire(tmp_path, "gitleaks", [])
+    _, muets = collecter(tmp_path, {"bandit", "checkov", "hadolint"})
+    assert muets == ["semgrep", "trivy"]
+
+
+def test_outil_non_applicable_avec_rapport_est_quand_meme_ignore(tmp_path: Path) -> None:
+    """La détection fait foi : ce qu'on n'a pas voulu lancer n'est pas lu."""
+    ecrire(tmp_path, "hadolint", [{"code": "DL1", "level": "error", "line": 1}])
+    constats, muets = collecter(tmp_path, {"hadolint"})
+    assert constats == []
+    assert "hadolint" not in muets
+
+
 def test_rapport_vide_est_muet(tmp_path: Path) -> None:
     """Un fichier de zéro octet est un outil qui n'a rien écrit, pas un scan propre."""
     (tmp_path / "trivy.json").write_text("", encoding="utf-8")
