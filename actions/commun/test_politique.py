@@ -58,6 +58,63 @@ def test_vocabulaire_inconnu_nest_pas_rabaisse() -> None:
     assert normaliser_severite(None) == INCONNUE
 
 
+def test_seuil_par_defaut_exclut_inconnue() -> None:
+    """Le defaut du module doit valoir la politique reelle, pas s'en approcher.
+
+    Ce contrat etait jusqu'ici verifie uniquement par les suites en aval : le
+    module partage pouvait donc changer de defaut sans qu'aucun de ses propres
+    tests ne bronche.
+    """
+    politique = Politique()
+    assert politique.bloquantes == {CRITIQUE, ELEVEE}
+    bloquants, autres = politique.trier([Faux("x", "y", INCONNUE)])
+    assert bloquants == []
+    assert len(autres) == 1
+
+
+def test_exemption_echue_cesse_de_couvrir(tmp_path: Path) -> None:
+    """La date d'expiration est le mecanisme, pas une decoration.
+
+    Sans elle, une exemption prise un mardi pour debloquer une livraison
+    devient une politique permanente que plus personne ne relit.
+    """
+    fichier = tmp_path / "politique.yaml"
+    fichier.write_text(
+        "bloquantes: [CRITIQUE]\n"
+        "exemptions:\n"
+        "  - regle: 'B1'\n"
+        "    justification: x\n"
+        "    expire: 2026-12-31\n",
+        encoding="utf-8",
+    )
+    politique = Politique.charger(fichier)
+    constat = Faux("bandit", "B1", CRITIQUE)
+
+    avant, _ = politique.trier([constat], aujourdhui=dt.date(2026, 12, 31))
+    jour_apres, _ = politique.trier([constat], aujourdhui=dt.date(2027, 1, 1))
+
+    assert avant == [], "l'exemption couvre encore le jour de son echeance"
+    assert len(jour_apres) == 1, "l'exemption echue doit redevenir bloquante"
+
+
+def test_motif_dexemption_est_ancre_sur_tout_lidentifiant(tmp_path: Path) -> None:
+    """`B1` ne doit pas exempter `B10` : une exemption trop large est invisible."""
+    fichier = tmp_path / "politique.yaml"
+    fichier.write_text(
+        "bloquantes: [CRITIQUE]\n"
+        "exemptions:\n"
+        "  - regle: 'B1'\n"
+        "    justification: x\n"
+        "    expire: 2099-01-01\n",
+        encoding="utf-8",
+    )
+    politique = Politique.charger(fichier)
+    bloquants, _ = politique.trier(
+        [Faux("bandit", "B10", CRITIQUE)], aujourdhui=dt.date(2026, 9, 1)
+    )
+    assert len(bloquants) == 1
+
+
 def test_politique_vide_bloque_encore_le_critique(tmp_path: Path) -> None:
     """Un fichier tronqué ne doit pas se traduire par « tout passe »."""
     fichier = tmp_path / "politique.yaml"

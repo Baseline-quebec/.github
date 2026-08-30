@@ -123,6 +123,12 @@ Pour l'envoi, la variable `WINDMILL_RAPPORT_CONFORMITE_URL` et le secret
 `WINDMILL_TOKEN`. Sans eux, le balayage tourne et le rapport est simplement
 sauté.
 
+En revanche, si Windmill **est** configuré et que l'envoi échoue quand même,
+le job échoue. Les deux situations se ressemblent dans les journaux mais n'ont
+rien à voir : la première est un choix, la seconde perd le rapport. Terminer en
+succès rendrait cette perte invisible, alors que tout ce dépôt repose sur
+l'idée qu'un canal silencieux est ambigu.
+
 ## Pourquoi un ruleset plutôt que le cookiecutter
 
 Le cookiecutter ne couvre que les nouveaux dépôts et ne rattrape jamais les
@@ -356,8 +362,18 @@ Les scripts sont appelés en ligne de commande depuis une étape de workflow,
 jamais importés comme un paquet. Les tests se lancent donc depuis le dossier de
 l'action, ce qui reproduit la façon dont le script est réellement chargé.
 
+La CI découvre les dossiers au lieu de les énumérer, et **refuse** un dossier
+d'action sans fichier `test_*.py`. Une liste en dur avait déjà laissé
+`actions/sweep` hors de la CI : le module partagé par les deux balayages
+périodiques, dont les tests ne tournaient donc jamais.
+
+Le module partagé porte ses propres tests de contrat plutôt que de s'en
+remettre aux suites en aval. Vérifié par mutation : changer son seuil par
+défaut ou désamorcer l'expiration des exemptions ne faisait rougir aucun test
+de `actions/commun`, seulement ceux de `secaudit-code` et `cve-scan`.
+
 ```bash
-for dossier in actions/commun actions/licence-scan actions/secaudit-code actions/cve-scan; do
+for dossier in actions/*/; do
   (cd "$dossier" && uv run --no-project --with pyyaml --with pytest python -m pytest -q)
 done
 

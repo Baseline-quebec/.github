@@ -15,6 +15,7 @@ from rapport import (
     MOYENNE,
     Constat,
     Politique,
+    annotation,
     collecter,
     lire_bandit,
     lire_checkov,
@@ -22,6 +23,7 @@ from rapport import (
     lire_hadolint,
     lire_semgrep,
     lire_trivy,
+    main,
     normaliser_severite,
     resumer,
 )
@@ -352,6 +354,102 @@ def test_politique_du_depot_reste_chargeable() -> None:
 # --------------------------------------------------------------------------
 # Résumé
 # --------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------
+# Annotations GitHub
+# --------------------------------------------------------------------------
+
+
+def test_annotation_sans_fichier_na_pas_de_virgule_en_trop() -> None:
+    """« ::error ,title=… » s'affiche mal : GitHub ne lit pas la propriete vide."""
+    texte = annotation(Constat("gitleaks", "clef", CRITIQUE, "", 0, "secret"))
+    assert texte.startswith("::error title=gitleaks clef::")
+    assert ",title=" not in texte
+
+
+def test_annotation_epingle_fichier_et_ligne() -> None:
+    texte = annotation(Constat("bandit", "B602", ELEVEE, "src/a.py", 12, "shell=True"))
+    assert texte == "::error file=src/a.py,line=12,title=bandit B602::shell=True"
+
+
+def test_annotation_omet_une_ligne_nulle() -> None:
+    """Les annotations sont numerotees a partir de 1 : « line=0 » est invalide."""
+    texte = annotation(Constat("trivy", "DS002", ELEVEE, "Dockerfile", 0, "root"))
+    assert "line=" not in texte
+    assert "file=Dockerfile" in texte
+
+
+def test_annotation_aplatit_un_message_multiligne() -> None:
+    """GitHub ne lit que la premiere ligne ; le reste s'afficherait en texte brut."""
+    texte = annotation(Constat("semgrep", "r", ELEVEE, "a.py", 1, "ligne un\nligne deux"))
+    assert "\n" not in texte
+    assert "ligne un ligne deux" in texte
+
+
+# --------------------------------------------------------------------------
+# Point d'entree
+# --------------------------------------------------------------------------
+
+
+def ecrire_constat_bloquant(dossier: Path) -> None:
+    ecrire(dossier, "gitleaks", [{"RuleID": "aws", "File": "a.py", "StartLine": 3}])
+
+
+def test_mode_bloquant_fait_echouer_le_job(tmp_path: Path) -> None:
+    ecrire_constat_bloquant(tmp_path)
+    code = main(["--rapports", str(tmp_path), "--politique", str(RACINE_POLITIQUE)])
+    assert code == 1
+
+
+def test_mode_observation_ne_bloque_jamais(tmp_path: Path) -> None:
+    """C'est ce qui rend le deploiement sur 82 depots sur : rien ne peut bloquer."""
+    ecrire_constat_bloquant(tmp_path)
+    code = main(
+        ["--rapports", str(tmp_path), "--politique", str(RACINE_POLITIQUE), "--sans-blocage"]
+    )
+    assert code == 0
+
+
+def test_non_applicables_sont_transmis_depuis_la_ligne_de_commande(tmp_path: Path) -> None:
+    ecrire(tmp_path, "gitleaks", [])
+    sortie = tmp_path / "rapport.json"
+    main(
+        [
+            "--rapports",
+            str(tmp_path),
+            "--politique",
+            str(RACINE_POLITIQUE),
+            "--non-applicables",
+            "bandit, checkov ,hadolint",
+            "--sortie-json",
+            str(sortie),
+            "--sans-blocage",
+        ]
+    )
+    contenu = json.loads(sortie.read_text(encoding="utf-8"))
+    assert contenu["non_applicables"] == ["bandit", "checkov", "hadolint"]
+    assert contenu["muets"] == ["semgrep", "trivy"]
+
+
+def test_sortie_bloquants_est_publiee_pour_le_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sortie = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(sortie))
+    ecrire_constat_bloquant(tmp_path)
+    main(["--rapports", str(tmp_path), "--politique", str(RACINE_POLITIQUE), "--sans-blocage"])
+    assert "bloquants=1" in sortie.read_text(encoding="utf-8")
+
+
+def test_resume_est_ecrit_dans_le_sommaire_du_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sommaire = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(sommaire))
+    ecrire_constat_bloquant(tmp_path)
+    main(["--rapports", str(tmp_path), "--politique", str(RACINE_POLITIQUE), "--sans-blocage"])
+    assert "Audit de sécurité du code" in sommaire.read_text(encoding="utf-8")
 
 
 def test_resume_signale_les_outils_muets() -> None:

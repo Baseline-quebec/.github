@@ -29,10 +29,21 @@ jobs:
       # Chaque action est testée depuis son propre dossier : les scripts sont
       # appelés en ligne de commande depuis un workflow, jamais importés comme
       # un paquet, et les tests reproduisent cette façon de les charger.
+      #
+      # Le dossier est découvert, pas énuméré : une liste en dur avait déjà
+      # laissé actions/sweep hors de la CI, c'est-à-dire un module partagé par
+      # les deux balayages dont les tests ne tournaient jamais.
       - name: Tests
+        shell: bash
         run: |
           set -euo pipefail
-          for dossier in actions/commun actions/licence-scan actions/secaudit-code actions/cve-scan; do
+          for dossier in actions/*/; do
+            # Un dossier d'action sans test est une regression a part entiere :
+            # il passerait la CI en silence.
+            if ! compgen -G "$dossier/test_*.py" > /dev/null; then
+              echo "::error title=Aucun test::$dossier ne contient aucun fichier test_*.py"
+              exit 1
+            fi
             echo "::group::$dossier"
             (cd "$dossier" && uv run --no-project --with pyyaml --with pytest python -m pytest -q)
             echo "::endgroup::"

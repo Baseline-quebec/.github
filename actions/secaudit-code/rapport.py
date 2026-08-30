@@ -48,6 +48,7 @@ __all__ = [
     "ORDRE",
     "Constat",
     "Politique",
+    "annotation",
     "collecter",
     "normaliser_severite",
     "resumer",
@@ -339,6 +340,25 @@ def resumer(bloquants: list[Constat], autres: list[Constat], muets: list[str]) -
     return "\n".join(lignes) + "\n"
 
 
+def annotation(constat: Constat) -> str:
+    """Compose l'annotation GitHub qui epingle le constat dans le diff.
+
+    Les proprietes sont assemblees et non concatenees a l'aveugle : un constat
+    sans fichier produisait « ::error ,title=… », que GitHub affiche mal. Une
+    ligne 0 est omise aussi, les annotations etant numerotees a partir de 1.
+    """
+    proprietes = []
+    if constat.fichier:
+        proprietes.append(f"file={constat.fichier}")
+        if constat.ligne > 0:
+            proprietes.append(f"line={constat.ligne}")
+    proprietes.append(f"title={constat.outil} {constat.regle}")
+    # Les retours a la ligne coupent l'annotation : GitHub ne lit que la
+    # premiere ligne et le reste s'affiche comme du texte brut.
+    message = constat.message.replace("\n", " ").strip()
+    return f"::error {','.join(proprietes)}::{message}"
+
+
 def ecrire_sortie(nom: str, valeur: str) -> None:
     """Écrit une sortie d'action si le job en fournit le canal."""
     fichier = os.environ.get("GITHUB_OUTPUT")
@@ -396,8 +416,7 @@ def main(argv: list[str] | None = None) -> int:
     ecrire_sortie("bloquants", str(len(bloquants)))
 
     for constat in bloquants:
-        emplacement = f"file={constat.fichier},line={constat.ligne}" if constat.fichier else ""
-        print(f"::error {emplacement},title={constat.outil} {constat.regle}::{constat.message}")
+        print(annotation(constat))
 
     if bloquants and not arguments.sans_blocage:
         return 1
