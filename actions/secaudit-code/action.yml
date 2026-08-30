@@ -1,0 +1,227 @@
+name: "Audit de sécurité du code"
+description: >
+  Cherche les secrets en clair, les motifs de code dangereux et les erreurs de
+  configuration d'infrastructure dans le dépôt. Reprend le profil `code` de
+  baseline-secaudit, ramené à ce qui peut tourner sur une pull request : rien
+  qui exige une cible déployée, une autorisation de scan ou un état persistant.
+
+inputs:
+  mode:
+    description: >
+      "bloquant" fait échouer le job sur un constat au-dessus du seuil.
+      "observation" produit le rapport sans jamais bloquer, pour mesurer le
+      volume réel avant d'activer l'application.
+    required: false
+    default: "observation"
+  chemin:
+    description: "Sous-répertoire à analyser, relatif à la racine du dépôt."
+    required: false
+    default: "."
+  rapport-json:
+    description: >
+      Chemin où écrire les constats en JSON. Utilisé par le balayage mensuel de
+      l'organisation, qui agrège un fichier par dépôt. Vide pour ne rien écrire.
+    required: false
+    default: ""
+
+outputs:
+  bloquants:
+    description: "Nombre de constats au-dessus du seuil de la politique."
+    value: ${{ steps.politique.outputs.bloquants }}
+
+runs:
+  using: "composite"
+  steps:
+    # Les versions sont épinglées explicitement, comme les actions le sont par
+    # empreinte : un scanner qui change de version sous nos pieds change le
+    # verdict de toutes les pull requests de l'organisation sans qu'aucun
+    # fichier n'ait bougé. Les monter est une décision, pas un effet de bord.
+    - name: Préparer l'espace de rapports
+      id: espace
+      shell: bash
+      env:
+        RAPPORTS: ${{ runner.temp }}/secaudit
+      run: |
+        set -euo pipefail
+        mkdir -p "$RAPPORTS"
+        echo "dossier=$RAPPORTS" >> "$GITHUB_OUTPUT"
+
+    - name: Détecter ce qu'il y a à analyser
+      id: detection
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      run: |
+        set -euo pipefail
+
+        # -prune sur les dossiers de dépendances : le code d'un tiers n'est pas
+        # le nôtre, et un node_modules fait exploser le temps de scan sans
+        # produire un seul constat sur lequel on puisse agir.
+        chercher() {
+          find . \
+            \( -name .git -o -name node_modules -o -name .venv -o -name venv \
+               -o -name vendor -o -name dist -o -name build \) -prune -o \
+            "$@" -print 2>/dev/null | head -1
+        }
+
+        python=non
+        [ -n "$(chercher -name '*.py' -type f)" ] && python=oui
+
+        docker=non
+        [ -n "$(chercher -name 'Dockerfile*' -type f)" ] && docker=oui
+
+        # checkov ne tourne que s'il y a de l'infrastructure décrite en fichiers.
+        # Le lancer sur un dépôt qui n'a qu'un workflow GitHub produit surtout du
+        # bruit, et un gate bruyant finit ignoré.
+        iac=non
+        for motif in '*.tf' '*.tf.json' '*.bicep' 'docker-compose*.y*ml' 'Chart.yaml'; do
+          if [ -n "$(chercher -name "$motif" -type f)" ]; then iac=oui; break; fi
+        done
+        [ "$docker" = oui ] && iac=oui
+
+        {
+          echo "python=$python"
+          echo "docker=$docker"
+          echo "iac=$iac"
+        } >> "$GITHUB_OUTPUT"
+        echo "Python : $python | Dockerfile : $docker | IaC : $iac"
+
+    - name: Installer uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        enable-cache: true
+
+    # Chaque outil se termine par `|| true` : un scanner qui plante ne doit pas
+    # emporter les cinq autres. Son silence n'est pas perdu pour autant, c'est
+    # rapport.py qui le signale comme muet à la fin.
+    - name: Chercher les secrets en clair
+      shell: bash
+      env:
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+        SOURCE: ${{ inputs.chemin }}
+      run: |
+        set -uo pipefail
+        docker run --rm \
+          -v "$PWD/$SOURCE":/src:ro -v "$RAPPORTS":/out \
+          ghcr.io/gitleaks/gitleaks:v8.30.1 \
+          dir /src --report-format json --report-path /out/gitleaks.json --exit-code 0 \
+          >>"$RAPPORTS/_outils.log" 2>&1 || true
+
+    - name: Analyser le code (semgrep)
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      env:
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+      run: |
+        set -uo pipefail
+        uv run --no-project --with semgrep==1.175.0 semgrep scan \
+          --config auto --json --output "$RAPPORTS/semgrep.json" --quiet . 2>>"$RAPPORTS/_outils.log" || true
+
+    - name: Analyser le code Python (bandit)
+      if: steps.detection.outputs.python == 'oui'
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      env:
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+      run: |
+        set -uo pipefail
+        uv run --no-project --with bandit==1.9.4 bandit \
+          --recursive . \
+          --exclude ./.venv,./venv,./node_modules,./build,./dist \
+          --format json --output "$RAPPORTS/bandit.json" 2>>"$RAPPORTS/_outils.log" || true
+
+    # --scanners misconfig,secret : les vulnérabilités de dépendances sont la
+    # charge de cve-scan, qui lit les fichiers de verrouillage. Les compter aux
+    # deux endroits ferait apparaître la même CVE dans deux rapports, avec deux
+    # verdicts possibles selon l'outil qui l'a vue.
+    - name: Analyser la configuration (trivy)
+      shell: bash
+      env:
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+        SOURCE: ${{ inputs.chemin }}
+      run: |
+        set -uo pipefail
+        docker run --rm \
+          -v "$PWD/$SOURCE":/src:ro -v "$RAPPORTS":/out \
+          aquasec/trivy:0.74.0 filesystem \
+          --scanners misconfig,secret --format json --output /out/trivy.json \
+          --exit-code 0 --no-progress /src \
+          >>"$RAPPORTS/_outils.log" 2>&1 || true
+
+    - name: Analyser l'infrastructure (checkov)
+      if: steps.detection.outputs.iac == 'oui'
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      env:
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+      run: |
+        set -uo pipefail
+        uv run --no-project --with checkov==3.3.16 checkov \
+          --directory . --output json --quiet --compact \
+          > "$RAPPORTS/checkov.json" 2>>"$RAPPORTS/_outils.log" || true
+
+    - name: Analyser les Dockerfiles (hadolint)
+      if: steps.detection.outputs.docker == 'oui'
+      shell: bash
+      working-directory: ${{ inputs.chemin }}
+      env:
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+      run: |
+        set -uo pipefail
+        mapfile -t fichiers < <(
+          find . \( -name .git -o -name node_modules -o -name vendor \) -prune -o \
+            -name 'Dockerfile*' -type f -print 2>/dev/null
+        )
+        [ ${#fichiers[@]} -gt 0 ] || exit 0
+        # --no-fail : hadolint sort en erreur des qu'il trouve quelque chose, ce
+        # qui est justement le cas nominal ici. Le verdict appartient a la
+        # politique, pas a l'outil.
+        docker run --rm -v "$PWD":/src:ro -w /src hadolint/hadolint:v2.15.1 \
+          hadolint --format json --no-fail "${fichiers[@]}" \
+          > "$RAPPORTS/hadolint.json" 2>>"$RAPPORTS/_outils.log" || true
+
+    - name: Appliquer la politique
+      id: politique
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+        ACTION_PATH: ${{ github.action_path }}
+        RAPPORT_JSON: ${{ inputs.rapport-json }}
+        PYTHON: ${{ steps.detection.outputs.python }}
+        DOCKER: ${{ steps.detection.outputs.docker }}
+        IAC: ${{ steps.detection.outputs.iac }}
+      run: |
+        set -euo pipefail
+        # Les outils sautes par la detection sont declares tels quels : sans
+        # cela, tout depot sans Dockerfile serait accuse d'avoir un scanner
+        # muet, et un avertissement qui se declenche toujours cesse d'etre lu.
+        non_applicables=""
+        [ "$PYTHON" = oui ] || non_applicables="${non_applicables}bandit,"
+        [ "$IAC" = oui ] || non_applicables="${non_applicables}checkov,"
+        [ "$DOCKER" = oui ] || non_applicables="${non_applicables}hadolint,"
+
+        options=(--rapports "$RAPPORTS" --politique "$ACTION_PATH/politique.yaml")
+        options+=(--non-applicables "${non_applicables%,}")
+        if [ "$MODE" != "bloquant" ]; then
+          options+=(--sans-blocage)
+        fi
+        if [ -n "$RAPPORT_JSON" ]; then
+          options+=(--sortie-json "$RAPPORT_JSON")
+        fi
+        uv run --no-project --with pyyaml python "$ACTION_PATH/rapport.py" "${options[@]}"
+
+    # Le journal des outils est publie meme quand l'etape precedente echoue :
+    # c'est exactement la que se trouve la raison d'un scanner muet, et sans
+    # elle le diagnostic recommence a zero.
+    - name: Publier le journal des outils
+      if: always()
+      shell: bash
+      env:
+        RAPPORTS: ${{ steps.espace.outputs.dossier }}
+      run: |
+        set -uo pipefail
+        journal="$RAPPORTS/_outils.log"
+        [ -s "$journal" ] || exit 0
+        echo "::group::Sortie des outils"
+        tail -c 60000 "$journal"
+        echo "::endgroup::"

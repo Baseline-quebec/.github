@@ -1,0 +1,44 @@
+# Politique d'audit de sécurité du code Baseline
+#
+# Ce fichier est la SEULE source de vérité du seuil de blocage. Il est lu par
+# rapport.py, jamais par les outils eux-mêmes : chaque scanner se contente de
+# produire ses constats, la décision se prend ici. Cela évite d'entretenir six
+# configurations d'outils qui divergeraient, et rend la politique lisible d'un
+# seul coup d'œil.
+#
+# Le vocabulaire de sévérité est celui de rapport.py, pas celui des outils :
+# CRITIQUE, ELEVEE, MOYENNE, FAIBLE, INCONNUE. La traduction depuis le
+# vocabulaire de chaque outil est dans EQUIVALENCES.
+
+# Sévérités qui font échouer le job en mode bloquant.
+#
+# INCONNUE n'est volontairement pas dans la liste : un outil qui change son
+# vocabulaire de sévérité entre deux versions verrouillerait sinon les pull
+# requests de toute l'organisation du jour au lendemain. Ces constats restent
+# visibles dans le rapport, et un pic d'INCONNUE signale une régression de
+# parsing à corriger dans rapport.py.
+bloquantes:
+  - CRITIQUE
+  - ELEVEE
+
+# Règles qu'on accepte de ne pas bloquer, pour un temps borné.
+#
+# Trois champs obligatoires en pratique : `regle` (expression régulière ancrée
+# sur la totalité de l'identifiant, insensible à la casse), `justification`
+# (pourquoi c'est acceptable, pas ce que fait la règle) et `expire` (date après
+# laquelle l'exemption cesse de s'appliquer). `outil` vaut "*" par défaut.
+#
+# La date d'expiration n'est pas une formalité : sans elle, une exemption prise
+# un mardi pour débloquer une livraison devient une politique permanente que
+# plus personne ne relit. Une exemption échue redevient bloquante d'elle-même,
+# ce qui force la relecture au lieu de la souhaiter.
+exemptions:
+  # Les dépôts d'articles et de démonstrations portent des notebooks où
+  # `assert` sert de vérification pédagogique. B101 y est du bruit pur.
+  - outil: bandit
+    regle: "B101"
+    justification: >
+      assert_used : bandit signale tout `assert`, y compris dans les tests et
+      les notebooks, où il est l'outil attendu. Le constat n'a jamais désigné
+      un vrai défaut chez nous.
+    expire: 2027-01-31
