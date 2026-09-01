@@ -69,11 +69,34 @@ regles_workflows() {
     '[{type: "workflows", parameters: {workflows: $w}}]'
 }
 
+# Branches ciblees.
+#
+# `~DEFAULT_BRANCH` ne suffit pas. Le 2026-09-01, cogniflo n'etait couvert par
+# AUCUN scan : sa branche par defaut est `main`, mais tout son travail passe par
+# `develop` et ses huit dernieres pull requests y allaient toutes. `main` ne
+# bouge que par une fusion periodique de `develop`, donc les seules pull
+# requests scannees etaient celles que personne ne relit ligne par ligne.
+#
+# Nommer `refs/heads/develop` couvre le modele « une branche d'integration
+# devant la branche par defaut » sans obliger chaque depot a se conformer a un
+# seul flux de travail. Un depot sans `develop` n'est pas affecte : GitHub
+# n'evalue la regle que sur les refs qui existent.
+#
+# baseline-automation porte une branche `dev` et non `develop`, mais ses pull
+# requests visent `main` : elle est deja couverte, et ajouter `dev` ici
+# imposerait des checks sur une branche que plus rien n'alimente.
+BRANCHES=(
+  "~DEFAULT_BRANCH"
+  "refs/heads/develop"
+)
+
 # Emet l'objet `conditions` du ruleset : le perimetre, exclusions comprises.
 conditions_ruleset() {
-  jq -nc --argjson exclus "$(printf '%s\n' "${EXCLUS[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')" \
+  jq -nc \
+    --argjson exclus "$(printf '%s\n' "${EXCLUS[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')" \
+    --argjson branches "$(printf '%s\n' "${BRANCHES[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')" \
     '{
-      ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] },
+      ref_name: { include: $branches, exclude: [] },
       repository_name: { include: ["~ALL"], exclude: $exclus }
     }'
 }
