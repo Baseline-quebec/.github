@@ -47,6 +47,18 @@ jobs:
           private-key: ${{ secrets.ORG_SWEEP_APP_KEY }}
           owner: ${{ github.repository_owner }}
 
+      # Trois exclusions, trois raisons differentes, toutes deliberees :
+      #   .github               heberge le balayage, se scanner soi-meme n'a
+      #                         aucun sens dans un rapport d'organisation
+      #   baseline-automation   psycopg en LGPL-3.0, code heberge chez nous et
+      #                         jamais livre au client, donc aucun arbitrage a
+      #                         rendre chaque mois (decision du 2026-09-01)
+      #   assistant-comite-rh   codespell en GPL-2.0, un linter de dev qui ne
+      #                         part dans aucune livraison (idem)
+      #
+      # Ces deux derniers restent couverts par le scan impose sur pull request,
+      # qui est de toute facon le controle qui compte : une licence change au
+      # moment du bump, pas entre deux balayages.
       - name: Enumerer
         id: liste
         env:
@@ -57,7 +69,8 @@ jobs:
             echo "::error title=Jeton manquant::Les secrets ORG_SWEEP_APP_ID et ORG_SWEEP_APP_KEY sont requis."
             exit 1
           fi
-          uv run --no-project python actions/sweep/sweep.py lister --exclure .github
+          uv run --no-project python actions/sweep/sweep.py lister \
+            --exclure .github,baseline-automation,assistant-comite-rh
 
   scanner:
     name: ${{ matrix.depot }}
@@ -88,11 +101,15 @@ jobs:
           repository: ${{ matrix.depot }}
           token: ${{ steps.jeton.outputs.token }}
 
+      # `depot` est obligatoire ici : sans lui l'action nomme le depot courant,
+      # c'est-a-dire `.github`, et le rapport agrege attribue les licences de
+      # tous les depots a celui qui heberge le workflow.
       - name: Analyser les licences
         uses: Baseline-quebec/.github/actions/licence-scan@v1
         with:
           mode: observation
           rapport-json: ${{ runner.temp }}/rapport.json
+          depot: ${{ matrix.depot }}
 
       - name: Nommer le rapport
         id: nom
