@@ -185,7 +185,7 @@ runs:
         if [ -n "$RAPPORT_JSON" ]; then
           options+=(--sortie-json "$RAPPORT_JSON")
         fi
-        uv run --no-project --with pyyaml python "$ACTION_PATH/rapport.py" "${options[@]}"
+        uv run --no-project --python 3.12 --with pyyaml python "$ACTION_PATH/rapport.py" "${options[@]}"
 
     # Le journal des outils est publie meme quand l'etape precedente echoue :
     # c'est exactement la que se trouve la raison d'un scanner muet, et sans
