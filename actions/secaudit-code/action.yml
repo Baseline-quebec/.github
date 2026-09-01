@@ -59,10 +59,37 @@ runs:
         set -euo pipefail
         bash "$ACTION_PATH/detecter.sh" "${{ inputs.chemin }}" | tee -a "$GITHUB_OUTPUT"
 
+    # `cache-dependency-glob` est vide DELIBEREMENT.
+    #
+    # Par defaut, setup-uv construit sa cle de cache en cherchant
+    # `**/pyproject.toml`, `**/uv.lock`, `**/*requirements*.txt` et quatre autres
+    # motifs dans le depot SCANNE. Deux consequences, mesurees le 2026-09-01 sur
+    # la pull request 477 de sfppn-maintenance-assistee :
+    #
+    # 1. Le parcours a pris 306,9 s des 448 s de l'etape « Auditer le code »,
+    #    soit 68 %. Le log s'arrete 5 minutes entre le deuxieme et le troisieme
+    #    fichier trouve : l'etape precedente, le scan de licences, venait
+    #    d'installer les dependances Node, et le `**` a du traverser tout
+    #    node_modules pour trouver trois fichiers. Les six scanners reunis,
+    #    semgrep, checkov, trivy, gitleaks, bandit et hadolint, ne coutent que
+    #    141 s. C'est un effet de bord de la reunion des quatre scans dans un
+    #    seul job : chaque etape herite desormais de ce que la precedente a
+    #    laisse sur le disque.
+    #
+    # 2. La cle ainsi obtenue depend des verrous du depot scanne, qui changent a
+    #    chaque bump de dependance, alors que cette action installe des versions
+    #    EPINGLEES avec `uv run --no-project --with`. Le cache ne pouvait donc
+    #    presque jamais toucher, et le log le confirme : « No GitHub Actions
+    #    cache found ». Cinq minutes de parcours pour rien.
+    #
+    # Vide, la cle ne depend plus du depot scanne : elle est stable d'un depot et
+    # d'un commit a l'autre, donc les roues des outils epingles se reutilisent
+    # vraiment.
     - name: Installer uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
         enable-cache: true
+        cache-dependency-glob: ""
 
     # Chaque outil se termine par `|| true` : un scanner qui plante ne doit pas
     # emporter les cinq autres. Son silence n'est pas perdu pour autant, c'est
