@@ -11,7 +11,7 @@
 # shellcheck disable=SC2034  # ORG et NOM_RULESET sont lus par les scripts qui sourcent ce fichier.
 ORG="Baseline-quebec"
 DEPOT_SOURCE_ID="1333554887" # Baseline-quebec/.github
-REF="refs/tags/v1"
+REF="refs/tags/v2"
 NOM_RULESET="Conformité Baseline"
 
 # Depots hors perimetre.
@@ -44,11 +44,14 @@ EXCLUS=(
 )
 
 # Workflows imposes a tous les depots cibles, par chemin dans ce depot-ci.
+#
+# Un SEUL workflow depuis v2. Les quatre scans y sont des etapes nommees du
+# meme job, parce qu'un job est facture a la minute ENTIERE : quatre jobs pour
+# 217 secondes de calcul cumule coutaient six minutes la ou quatre suffisent.
+# Mesure sur aout 2026, 68 depots actifs, 340 commits : 1233 minutes facturees
+# contre 843 une fois reunies, soit 32 % de moins sans retirer un controle.
 WORKFLOWS=(
-  ".github/workflows/licence-scan.yml"
-  ".github/workflows/llm-scan.yml"
-  ".github/workflows/secaudit-code.yml"
-  ".github/workflows/cve-scan.yml"
+  ".github/workflows/conformite.yml"
 )
 
 # Emet le tableau JSON `rules` du ruleset.

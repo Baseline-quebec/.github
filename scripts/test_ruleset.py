@@ -88,15 +88,53 @@ def test_chaque_exclusion_arrive_dans_les_conditions() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_les_quatre_controles_sont_imposes() -> None:
+def test_un_seul_workflow_est_impose() -> None:
+    """Depuis v2, les quatre controles sont des etapes d'un meme job.
+
+    Un job est facture a la minute entiere : quatre jobs pour 217 secondes de
+    calcul cumule coutaient six minutes la ou quatre suffisent.
+    """
     regles = appeler("regles_workflows")
     chemins = [w["path"] for w in regles[0]["parameters"]["workflows"]]
-    assert sorted(chemins) == [
-        ".github/workflows/cve-scan.yml",
-        ".github/workflows/licence-scan.yml",
-        ".github/workflows/llm-scan.yml",
-        ".github/workflows/secaudit-code.yml",
-    ]
+    assert chemins == [".github/workflows/conformite.yml"]
+
+
+def test_les_quatre_controles_sont_toujours_la() -> None:
+    """La garde qui comptait quatre FICHIERS compte maintenant quatre ETAPES.
+
+    Reunir les jobs devait faire economiser des minutes, pas perdre un
+    controle en chemin. Une garde posee a cote de la surface qu'elle pretend
+    proteger est pire que pas de garde : c'est ici, dans les etapes du
+    workflow impose, que se lit desormais ce qui est reellement execute.
+    """
+    racine = Path(__file__).parent.parent
+    impose = variable("WORKFLOWS")[0]
+    contenu = (racine / impose).read_text(encoding="utf-8")
+
+    attendus = {
+        "CVE des dependances": "actions/cve-scan@",
+        "modeles LLM deprecies": "tracking-llm-discontinued@",
+        "licences": "actions/licence-scan@",
+        "securite du code": "actions/secaudit-code@",
+    }
+    for nom, action in attendus.items():
+        assert action in contenu, f"le controle « {nom} » n'est plus execute par {impose}"
+
+
+def test_chaque_etape_rend_son_verdict_meme_apres_un_echec() -> None:
+    """Sans `if: always()`, le premier echec masque les trois autres verdicts.
+
+    Et sans etape de verdict final, le job prendrait la couleur de sa DERNIERE
+    etape : un echec en cours de route passerait alors inapercu.
+    """
+    racine = Path(__file__).parent.parent
+    contenu = (racine / variable("WORKFLOWS")[0]).read_text(encoding="utf-8")
+    assert contenu.count("if: always()") >= 5, (
+        "chaque etape de scan, plus l'etape de verdict, doit porter `if: always()`"
+    )
+    assert "name: Verdict" in contenu, (
+        "sans etape de verdict, le job prend la couleur de sa derniere etape"
+    )
 
 
 def test_chaque_workflow_impose_existe_dans_le_depot() -> None:
@@ -122,7 +160,7 @@ def test_regle_a_la_forme_attendue_par_lapi() -> None:
     for workflow in regles[0]["parameters"]["workflows"]:
         assert set(workflow) == {"repository_id", "path", "ref"}
         assert isinstance(workflow["repository_id"], int)
-        assert workflow["ref"] == "refs/tags/v1"
+        assert workflow["ref"] == "refs/tags/v2"
 
 
 def test_toutes_les_regles_pointent_le_meme_depot_source() -> None:
