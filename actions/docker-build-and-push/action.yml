@@ -1,0 +1,118 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+name: "Docker : construire et pousser"
+description: >
+  Construit une image et la pousse vers un registre de conteneurs. Version
+  d'organisation des copies qui vivaient dans sfppn-maintenance-assistee et
+  mpa-data-bridge, ou elles avaient divergé : la premiere avait gagné `context`,
+  `target` et un cache, la seconde déclarait un `docker-target` qu'elle
+  n'utilisait pas et ne mettait aucune directive de cache.
+
+inputs:
+  #################
+  # REQUIS
+  #################
+  docker-images:
+    required: true
+    description: >
+      Images pleinement qualifiées (registre/espace/nom:étiquette), une par
+      ligne. Toutes les étiquettes listées sortent d'UN SEUL build : c'est la
+      façon de pousser vers plusieurs registres sans reconstruire.
+  registry-url:
+    required: true
+    description: "URL du registre de conteneurs auprès duquel s'authentifier."
+  registry-username:
+    required: true
+    description: "Identifiant d'authentification au registre."
+  registry-password:
+    required: true
+    description: "Secret d'authentification au registre."
+
+  #################
+  # OPTIONNELS
+  #################
+  build-args:
+    required: false
+    description: "Arguments de build, un par ligne."
+  context:
+    required: false
+    description: "Contexte de build Docker."
+    default: .
+  dockerfile-path:
+    required: false
+    description: "Répertoire contenant le Dockerfile."
+    default: .
+  target:
+    required: false
+    description: >
+      Étage du Dockerfile à construire. ATTENTION en migrant depuis la copie de
+      mpa-data-bridge : son entrée s'appelait `docker-target` et n'était câblée
+      à rien, donc le build produisait le dernier étage du Dockerfile, pas
+      celui demandé. Ici l'entrée agit. Vérifier l'image produite avant de
+      basculer un pipeline qui reposait sur l'ancien comportement.
+    default: ""
+  cache-export:
+    required: false
+    description: >
+      "true" exporte le cache COMPLET (mode=max) : à réserver à la branche par
+      défaut et aux exécutions manuelles. Sinon mode=min. Jamais aucun cache.
+    default: "false"
+  platforms:
+    required: false
+    description: >
+      Plateformes cibles, par exemple "linux/amd64,linux/arm64". Laisser vide
+      construit pour l'architecture du runner. QEMU n'est installé QUE si cette
+      entrée est renseignée : l'installer sans en avoir besoin coûtait de 30 à
+      60 secondes par job, sur des centaines de jobs mono-architecture.
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    # QEMU fournit les gestionnaires binfmt nécessaires à la construction
+    # croisée. Sans `platforms`, le build est mono-architecture et QEMU ne sert
+    # à rien : les deux copies d'origine l'installaient inconditionnellement.
+    - name: Installer QEMU
+      if: inputs.platforms != ''
+      uses: docker/setup-qemu-action@v3
+
+    - name: Installer Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Authentification au registre
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry-url }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    # POURQUOI LES PULL REQUESTS EXPORTENT AUSSI, EN mode=min.
+    #
+    # `mode=max` écrit toutes les couches intermédiaires (1 à 2 Go de
+    # dépendances sur ces images) et coûte 300 secondes et plus. D'où la
+    # conclusion, tirée en août 2026, de ne rien exporter sur les pull
+    # requests. La mesure dit l'inverse : sur août, le job `prod` de
+    # sfppn-maintenance-assistee, qui tourne sur main avec un cache chaud, met
+    # 5 minutes ; `dev` et `staging`, qui lisent un cache que personne
+    # n'alimente pour leur branche, en mettent 13 à 14. Le cache GHA est
+    # cloisonné par branche : une pull request lit le cache de la branche par
+    # défaut, mais rien ne remplit le sien, donc chaque nouveau push repart de
+    # presque zéro. 270 builds de pull request par mois, 500 secondes de trop
+    # chacun.
+    #
+    # `mode=min` n'exporte que les couches de l'image finale : quelques
+    # dizaines de secondes à l'écriture, et les pushes suivants de la même
+    # branche repartent d'un cache qui leur appartient.
+    - name: Construire et pousser
+      uses: docker/build-push-action@v6
+      with:
+        push: true
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile-path }}/Dockerfile
+        target: ${{ inputs.target }}
+        platforms: ${{ inputs.platforms }}
+        build-args: |
+          ${{ inputs.build-args }}
+        tags: |
+          ${{ inputs.docker-images }}
+        cache-from: type=gha
+        cache-to: ${{ inputs.cache-export == 'true' && 'type=gha,mode=max' || 'type=gha,mode=min' }}
