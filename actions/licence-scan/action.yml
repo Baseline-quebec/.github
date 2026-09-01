@@ -183,7 +183,7 @@ runs:
         MODE: ${{ inputs.mode }}
       run: |
         set -uo pipefail
-        if uv run --no-project python "$ACTION_PATH/extraire.py" --racine . --sortie "$SORTIE"; then
+        if uv run --no-project --python 3.12 python "$ACTION_PATH/extraire.py" --racine . --sortie "$SORTIE"; then
           exit 0
         fi
         if [ "$MODE" = "bloquant" ]; then
@@ -215,4 +215,4 @@ runs:
         if [ -n "$DEPOT" ]; then
           options+=(--depot "$DEPOT")
         fi
-        uv run --no-project --with pyyaml python "$ACTION_PATH/report.py" "${options[@]}"
+        uv run --no-project --python 3.12 --with pyyaml python "$ACTION_PATH/report.py" "${options[@]}"

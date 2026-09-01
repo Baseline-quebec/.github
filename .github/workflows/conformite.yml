@@ -74,6 +74,14 @@ jobs:
       #
       # L'ordre va du plus court au plus long : ce qui rougit le plus souvent
       # rougit le plus vite.
+      #
+      # CE QUE LE PARTAGE D'UN JOB CHANGE. Ces étapes partagent desormais un
+      # meme runner, donc un meme environnement. L'étape des modèles installe
+      # Python 3.11 par `setup-python`, ce qui repositionne `pythonLocation`
+      # pour toutes les suivantes : le 2026-09-01, l'audit de sécurité est mort
+      # sur une `SyntaxError` en exécutant du code écrit pour 3.12. Les actions
+      # nomment donc leur version (`uv run --python`), et un test le garde. Ne
+      # jamais supposer qu'une étape retrouve l'environnement d'origine.
       - name: Analyser les dépendances
         id: cve
         if: always()
