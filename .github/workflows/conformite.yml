@@ -1,0 +1,134 @@
+# Workflow central de conformité : les quatre scans en un seul job.
+#
+# Il n'est PAS destiné à être copié dans les dépôts. Il est imposé par un
+# ruleset au niveau de l'organisation (règle « Require workflows to pass before
+# merging ») et GitHub l'exécute dans le contexte de chaque dépôt ciblé.
+#
+# POURQUOI UN SEUL JOB
+#
+# Un job GitHub est facturé à la MINUTE ENTIÈRE. Les quatre scans separes
+# duraient, en moyenne sur août 2026 et sur les 68 dépôts actifs : licences
+# 38 s, modèles LLM 31 s, CVE 28 s, audit de sécurité 120 s. Quatre jobs pour
+# 217 secondes de calcul, c'est six minutes facturées là où quatre suffisent.
+# Mesure exacte sur 340 commits : 1233 minutes facturées, contre 843 une fois
+# réunis, soit 32 % de moins sans retirer un seul contrôle.
+#
+# Les étapes restent NOMMÉES et l'exécution continue après un échec
+# (`if: always()`), pour que la sortie dise lequel des quatre a rougi. C'est ce
+# qui remplace la granularité des quatre checks distincts : on perd quatre
+# lignes dans l'interface de la pull request, on ne perd pas l'information.
+#
+# Le déclencheur `pull_request` / `merge_group` n'est ici que pour les
+# exécutions dans ce dépôt-ci : en exécution imposée, GitHub force ces deux
+# événements et ignore le bloc `on`.
+#
+# Pour modifier une politique, éditer actions/<scan>/politique.yaml puis
+# déplacer le tag v1 : les dépôts suivent sans aucune modification.
+
+name: Conformité Baseline
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "bloquant ou observation"
+        type: choice
+        options: ["observation", "bloquant"]
+        default: "observation"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: conformite-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformite:
+    name: Conformité Baseline
+    # Ce depot-ci est exclu : les `uses` ci-dessous pointent vers le tag v1, et
+    # le tag ne porte un nouveau controle qu'APRES la fusion. Sans cette garde,
+    # la pull request qui introduit un controle echouerait toujours sur un
+    # « action introuvable ». Les actions sont exercees ici par la CI, qui les
+    # appelle par leur chemin local (./actions/...), ce que l'execution imposee
+    # ne peut pas faire.
+    if: github.repository != 'Baseline-quebec/.github'
+    runs-on: ubuntu-latest
+    # Somme des quatre bornes precedentes (20 + 15 + 20 + 15), moins la marge
+    # que le partage d'un seul demarrage rend inutile. Au-dela, c'est un
+    # scanner bloque, pas un depot gros.
+    timeout-minutes: 45
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Références pleinement qualifiées obligatoires : en exécution imposée, le
+      # dépôt courant est le dépôt cible, donc un chemin relatif « ./actions/... »
+      # pointerait dans le vide.
+      #
+      # L'ordre va du plus court au plus long : ce qui rougit le plus souvent
+      # rougit le plus vite.
+      - name: Analyser les dépendances
+        id: cve
+        if: always()
+        uses: Baseline-quebec/.github/actions/cve-scan@v1
+        with:
+          mode: ${{ inputs.mode || 'observation' }}
+
+      - name: Analyser les références aux modèles
+        id: modeles
+        if: always()
+        uses: Baseline-quebec/tracking-llm-discontinued@main
+        with:
+          repo-name: ${{ github.repository }}
+          assignees: ${{ vars.LLM_SCAN_ASSIGNEES || '' }}
+          webhook-url: ${{ vars.LLM_SCAN_WEBHOOK_URL }}
+          webhook-token: ${{ secrets.LLM_SCAN_WEBHOOK_TOKEN }}
+
+      - name: Analyser les licences
+        id: licences
+        if: always()
+        uses: Baseline-quebec/.github/actions/licence-scan@v1
+        with:
+          mode: ${{ inputs.mode || 'observation' }}
+
+      - name: Auditer le code
+        id: securite
+        if: always()
+        uses: Baseline-quebec/.github/actions/secaudit-code@v1
+        with:
+          mode: ${{ inputs.mode || 'observation' }}
+
+      # Sans ce recapitulatif, `if: always()` masquerait un echec : le job
+      # prendrait la couleur de sa DERNIERE etape. Chaque scan est donc rappele
+      # avec son verdict, et le job echoue si l'un d'eux a rougi.
+      - name: Verdict
+        if: always()
+        shell: bash
+        env:
+          CVE: ${{ steps.cve.outcome }}
+          MODELES: ${{ steps.modeles.outcome }}
+          LICENCES: ${{ steps.licences.outcome }}
+          SECURITE: ${{ steps.securite.outcome }}
+        run: |
+          echo "CVE des dépendances verrouillées : $CVE"
+          echo "Références aux modèles dépréciés : $MODELES"
+          echo "Licences des dépendances        : $LICENCES"
+          echo "Secrets, code et configuration  : $SECURITE"
+          {
+            echo "| Contrôle | Verdict |"
+            echo "|---|---|"
+            echo "| CVE des dépendances verrouillées | $CVE |"
+            echo "| Références aux modèles dépréciés | $MODELES |"
+            echo "| Licences des dépendances | $LICENCES |"
+            echo "| Secrets, code et configuration | $SECURITE |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for v in "$CVE" "$MODELES" "$LICENCES" "$SECURITE"; do
+            if [ "$v" = "failure" ]; then
+              echo "::error title=Conformité Baseline::Au moins un contrôle a échoué. Voir le récapitulatif ci-dessus."
+              exit 1
+            fi
+          done
