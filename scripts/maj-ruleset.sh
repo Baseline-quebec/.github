@@ -51,6 +51,23 @@ if [ "$exclus_vivants" != "$exclus_declares" ]; then
   echo
 fi
 
+# Meme raisonnement pour les branches ciblees, et meme angle mort : ce script
+# n'ecrit pas `conditions`, donc ajouter une branche a BRANCHES ne l'applique
+# pas. Sans cet avertissement, le depot declarerait une branche couverte qui ne
+# l'est pas, ce qui est pire qu'une branche oubliee : on croirait le scan actif.
+branches_vivantes=$(jq -c '.conditions.ref_name.include // [] | sort' <<<"$vivant")
+branches_declarees=$(conditions_ruleset | jq -c '.ref_name.include | sort')
+if [ "$branches_vivantes" != "$branches_declarees" ]; then
+  echo
+  echo "::warning::Derive de branches entre le ruleset et ce depot."
+  echo "  branches reelles   : $branches_vivantes"
+  echo "  branches declarees : $branches_declarees"
+  echo "  Ce script n'ecrit PAS conditions. Appliquer a la main :"
+  echo "    conditions_ruleset | jq '{conditions: .}' |"
+  echo "      gh api -X PUT orgs/${ORG}/rulesets/${identifiant} --input -"
+  echo
+fi
+
 if [ "$actuel" = "$vise" ]; then
   echo "Rien a changer."
   exit 0

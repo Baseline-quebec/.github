@@ -73,8 +73,22 @@ def test_exclusions_connues_sont_declarees() -> None:
 
 def test_conditions_ciblent_la_branche_par_defaut_de_tous_les_depots() -> None:
     conditions = appeler("conditions_ruleset")
-    assert conditions["ref_name"]["include"] == ["~DEFAULT_BRANCH"]
+    assert conditions["ref_name"]["include"] == variable("BRANCHES")
+    assert "~DEFAULT_BRANCH" in conditions["ref_name"]["include"]
     assert conditions["repository_name"]["include"] == ["~ALL"]
+
+
+def test_la_branche_d_integration_est_couverte() -> None:
+    """cogniflo n'etait couvert par aucun scan : ses pull requests visent
+    `develop`, et le ruleset ne ciblait que la branche par defaut."""
+    assert "refs/heads/develop" in appeler("conditions_ruleset")["ref_name"]["include"]
+
+
+def test_chaque_branche_declaree_arrive_dans_les_conditions() -> None:
+    """Meme garde que pour EXCLUS : une branche nommee dans BRANCHES et absente
+    des conditions ferait croire un scan actif la ou il n'y en a pas."""
+    conditions = appeler("conditions_ruleset")
+    assert sorted(conditions["ref_name"]["include"]) == sorted(variable("BRANCHES"))
 
 
 def test_chaque_exclusion_arrive_dans_les_conditions() -> None:
