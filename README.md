@@ -112,6 +112,24 @@ Chaque dépôt est scanné par un job de matrice qui réutilise **exactement la 
 action** que les pull requests. Le rapport périodique et le blocage en PR ne
 peuvent donc pas diverger : une seule politique, un seul extracteur.
 
+**Le job de matrice doit passer `depot: ${{ matrix.depot }}` à l'action.** C'est
+le seul endroit de ce dépôt où « le dépôt courant » et « le dépôt analysé »
+diffèrent : le balayage tourne dans `.github` et scanne autre chose. Sans cette
+entrée, les scripts retombent sur `GITHUB_REPOSITORY` et attribuent tous les
+constats à `.github`. Le 2026-09-01, le rapport de licences a ainsi annoncé neuf
+dépôts sous le même nom : juste sur le compte, faux sur chaque nom, donc
+inexploitable, et aucun test Python ne pouvait le voir. Deux tests de câblage
+dans `actions/sweep/test_cablage_depot.py` figent désormais le passage de
+l'entrée, des deux côtés.
+
+Le balayage de licences exclut trois dépôts, et chacun pour une raison
+différente : `.github` héberge le balayage, `baseline-automation` ne porte que
+`psycopg` en LGPL-3.0 dans du code hébergé chez nous, `assistant-comite-rh` ne
+porte que `codespell` en GPL-2.0, un linter de dev. Ces deux derniers restent
+couverts par le scan imposé sur pull request, qui est de toute façon le contrôle
+qui compte : une licence change au moment du bump, pas entre deux balayages. La
+liste vit dans le `--exclure` de `licence-digest.yml`, commentée sur place.
+
 Les deux balayages tournent en matrice, un job par dépôt. GitHub refuse une
 matrice de plus de **256 jobs** ; l'organisation en compte 120 actifs, et
 `sweep.py` avertit à 230 puis refuse au-delà de 256. Franchir la limite sans

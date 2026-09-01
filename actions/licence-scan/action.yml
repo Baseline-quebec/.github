@@ -23,6 +23,17 @@ inputs:
       l'organisation, qui agrège un fichier par dépôt. Vide pour ne rien écrire.
     required: false
     default: ""
+  depot:
+    description: >
+      Nom du dépôt analysé, tel qu'il doit apparaître dans le rapport. Le défaut
+      convient à l'exécution imposée sur une pull request, où le dépôt courant
+      EST le dépôt analysé. Le balayage mensuel doit passer `matrix.depot` :
+      il tourne dans `.github` et scanne un autre dépôt à chaque job de matrice,
+      donc le défaut nommerait `.github` dans les 118 rapports et le dépôt
+      réellement touché n'apparaîtrait nulle part. Constaté le 2026-09-01 : neuf
+      dépôts distincts rapportés sous le même nom dans Slack.
+    required: false
+    default: ${{ github.repository }}
 
 outputs:
   interdites:
@@ -189,6 +200,7 @@ runs:
         RAPPORT: ${{ runner.temp }}/licences.json
         ACTION_PATH: ${{ github.action_path }}
         RAPPORT_JSON: ${{ inputs.rapport-json }}
+        DEPOT: ${{ inputs.depot }}
       run: |
         set -euo pipefail
         options=(--rapport-trivy "$RAPPORT" --politique "$ACTION_PATH/politique.yaml")
@@ -197,5 +209,10 @@ runs:
         fi
         if [ -n "$RAPPORT_JSON" ]; then
           options+=(--sortie-json "$RAPPORT_JSON")
+        fi
+        # Une entrée vide laisse le defaut de report.py decider plutot que
+        # d'ecrire un nom vide dans le rapport agrege.
+        if [ -n "$DEPOT" ]; then
+          options+=(--depot "$DEPOT")
         fi
         uv run --no-project --with pyyaml python "$ACTION_PATH/report.py" "${options[@]}"
