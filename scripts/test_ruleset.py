@@ -58,9 +58,17 @@ def test_exclusions_connues_sont_declarees() -> None:
     tracking-llm-discontinued porte le registre des modèles dépréciés : le
     scanner y produirait une issue par modèle, 182 en une exécution. Marketing
     et Ventes sont des dépôts de travail, essentiellement du HTML de sites et
-    de présentations.
+    de présentations. bswh-baylee et serko-northsky sont hors maintenance
+    Baseline depuis le 2026-09-01 : personne n'y traite les checks imposés sur
+    les pull requests.
     """
-    assert set(variable("EXCLUS")) == {"tracking-llm-discontinued", "Marketing", "Ventes"}
+    assert set(variable("EXCLUS")) == {
+        "tracking-llm-discontinued",
+        "Marketing",
+        "Ventes",
+        "bswh-baylee",
+        "serko-northsky",
+    }
 
 
 def test_conditions_ciblent_la_branche_par_defaut_de_tous_les_depots() -> None:
