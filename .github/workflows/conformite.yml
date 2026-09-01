@@ -23,7 +23,10 @@
 # événements et ignore le bloc `on`.
 #
 # Pour modifier une politique, éditer actions/<scan>/politique.yaml puis
-# déplacer le tag v1 : les dépôts suivent sans aucune modification.
+# déplacer le tag majeur courant (v2) : les dépôts suivent sans aucune
+# modification. Le tag majeur est MOUVANT et suit les correctifs ; une rupture
+# d'interface, comme le passage de quatre checks à un seul, prend un nouveau
+# majeur et laisse le précédent intact comme point de retour.
 
 name: Conformité Baseline
 
@@ -74,7 +77,7 @@ jobs:
       - name: Analyser les dépendances
         id: cve
         if: always()
-        uses: Baseline-quebec/.github/actions/cve-scan@v1
+        uses: Baseline-quebec/.github/actions/cve-scan@v2
         with:
           mode: ${{ inputs.mode || 'observation' }}
 
@@ -91,14 +94,14 @@ jobs:
       - name: Analyser les licences
         id: licences
         if: always()
-        uses: Baseline-quebec/.github/actions/licence-scan@v1
+        uses: Baseline-quebec/.github/actions/licence-scan@v2
         with:
           mode: ${{ inputs.mode || 'observation' }}
 
       - name: Auditer le code
         id: securite
         if: always()
-        uses: Baseline-quebec/.github/actions/secaudit-code@v1
+        uses: Baseline-quebec/.github/actions/secaudit-code@v2
         with:
           mode: ${{ inputs.mode || 'observation' }}
 

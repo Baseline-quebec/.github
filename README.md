@@ -11,20 +11,33 @@ Le périmètre est « tous les dépôts sauf `tracking-llm-discontinued`,
 `Marketing` et `Ventes` », déclaré dans `scripts/ruleset-commun.sh` et vérifié
 par un test.
 
-| Contrôle | Fichier | Déclenchement | Portée |
-|---|---|---|---|
-| Conformité des licences | `.github/workflows/licence-scan.yml` | Pull request, merge queue | Tous les dépôts ciblés |
-| Modèles LLM dépréciés | `.github/workflows/llm-scan.yml` | Pull request, merge queue | Tous les dépôts ciblés |
-| Sécurité du code | `.github/workflows/secaudit-code.yml` | Pull request, merge queue | Tous les dépôts ciblés |
-| Vulnérabilités des dépendances | `.github/workflows/cve-scan.yml` | Pull request, merge queue | Tous les dépôts ciblés |
+Un seul workflow est imposé, `.github/workflows/conformite.yml`, déclenché sur
+pull request et merge queue. Il porte les quatre contrôles comme étapes nommées
+d'un même job :
+
+| Étape | Action | Durée moyenne |
+|---|---|---|
+| CVE des dépendances verrouillées | `actions/cve-scan` | 28 s |
+| Références aux modèles dépréciés | `tracking-llm-discontinued` | 31 s |
+| Licences des dépendances | `actions/licence-scan` | 38 s |
+| Secrets, code et configuration | `actions/secaudit-code` | 120 s |
+
+**Pourquoi un seul job.** Un job GitHub est facturé à la minute entière. Quatre
+jobs pour 217 secondes de calcul cumulé, c'est six minutes payées là où quatre
+suffisent. Mesure sur août 2026, 68 dépôts actifs, 340 commits : 1233 minutes
+facturées contre 843 une fois réunies, soit 32 % de moins sans retirer un seul
+contrôle. Chaque étape porte `if: always()`, donc un échec n'empêche pas les
+suivantes de rendre leur verdict, et une étape « Verdict » les récapitule dans
+le résumé du job puis fait échouer le job si l'un d'eux a rougi. Sans elle, le
+job prendrait la couleur de sa dernière étape et un échec passerait inaperçu.
 
 La détection de dérive des modèles LLM, c'est-à-dire un modèle qui devient
 déprécié alors que le code n'a pas bougé, reste couverte par le cron mensuel de
 [`tracking-llm-discontinued`](https://github.com/Baseline-quebec/tracking-llm-discontinued).
 
 Les workflows de sécurité s'excluent de ce dépôt-ci (`if: github.repository !=`) :
-ils référencent leur action par le tag `v1`, que la pull request qui introduit
-un contrôle n'a pas encore déplacé. La CI les exerce par leur chemin local
+ils référencent leur action par le tag majeur courant, que la pull request qui
+introduit un contrôle n'a pas encore déplacé. La CI les exerce par leur chemin local
 (`./actions/...`), ce que l'exécution imposée ne peut pas faire, donc chaque
 modification est bien testée de bout en bout avant la fusion.
 
@@ -189,7 +202,7 @@ Le cookiecutter ne couvre que les nouveaux dépôts et ne rattrape jamais les
 comptant les archivés). Un ruleset organisationnel s'applique immédiatement à
 tous, y compris aux dépôts créés demain, sans dépendre de la discipline de qui
 que ce soit. Changer la politique se fait ici, à un seul endroit, et les dépôts
-suivent au déplacement du tag `v1`.
+suivent au déplacement du tag majeur courant.
 
 ### La limite à connaître
 
@@ -388,7 +401,7 @@ gh auth refresh -h github.com -s admin:org   # une seule fois, plus l'autorisati
 ./scripts/creer-ruleset.sh          # crée le ruleset
 ./scripts/activer-ruleset.sh        # Active : le scan s'exécute, sans bloquer
 # ... mesurer un mois, curer politique.yaml ...
-# puis passer l'action en mode: bloquant dans son workflow et redéplacer v1
+# puis passer l'action en mode: bloquant dans son workflow et redéplacer le tag majeur
 ```
 
 ### Ajouter un contrôle à un ruleset déjà créé
@@ -406,17 +419,40 @@ regarde les deux côtés. Cette dérive a déjà existé — `Marketing` et `Ven
 étaient exclus en production sans que le script les nomme, si bien qu'une
 reconstruction après incident aurait réimposé les scans sur ces deux dépôts.
 
-**L'ordre compte.** Le ruleset référence les workflows par le tag `v1` : le
-mettre à jour avant d'avoir déplacé le tag le ferait pointer vers un fichier
-inexistant, et le check échouerait sur toutes les pull requests de
-l'organisation. `maj-ruleset.sh` refuse de s'exécuter dans ce cas.
+**L'ordre compte.** Le ruleset référence les workflows par un tag : le mettre à
+jour avant d'avoir déplacé le tag le ferait pointer vers un fichier inexistant,
+et le check échouerait sur toutes les pull requests de l'organisation.
+`maj-ruleset.sh` refuse de s'exécuter dans ce cas.
 
 ```bash
-# 1. fusionner la pull request qui ajoute le workflow
+# 1. fusionner la pull request qui ajoute le controle
 git checkout main && git pull
-git tag -f v1 && git push -f origin v1   # 2. deplacer le tag
+git tag -f v2 && git push -f origin v2   # 2. deplacer le tag majeur courant
 ./scripts/maj-ruleset.sh                 # 3. imposer le nouveau controle
 ```
+
+### Le versionnement des tags
+
+Le tag majeur est **mouvant** : il suit les correctifs et les ajouts de
+politique, et les dépôts en profitent sans rien changer chez eux. C'est le
+modèle des actions publiques, où `actions/checkout@v4` désigne la dernière v4 et
+non une version figée.
+
+Un nouveau majeur est créé quand l'**interface** change, c'est-à-dire ce qu'un
+dépôt ciblé voit : le nombre de checks, leurs noms, ce qui bloque une fusion.
+Le passage de quatre checks à un seul, en v2, est exactement ce cas. Le majeur
+précédent reste alors en place, intact : il sert de point de retour tant que la
+bascule n'est pas confirmée.
+
+Ce qui ne se fait PAS : un tag mineur du genre `v1.1` pour publier un correctif.
+Le tag sert à deux choses ici, la référence des fichiers de workflow dans le
+ruleset ET la référence des actions dans les `uses:`. Publier un mineur
+obligerait à réécrire les `uses:` à chaque correctif, et détruirait la promesse
+« les dépôts suivent sans aucune modification ».
+
+**État des tags :** `v1` porte les quatre workflows séparés, `v2` porte le
+workflow unique. `v1` est conservé jusqu'à ce que la bascule soit vérifiée sur
+une pull request réelle.
 
 ## Développement
 

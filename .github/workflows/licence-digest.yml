@@ -105,7 +105,7 @@ jobs:
       # c'est-a-dire `.github`, et le rapport agrege attribue les licences de
       # tous les depots a celui qui heberge le workflow.
       - name: Analyser les licences
-        uses: Baseline-quebec/.github/actions/licence-scan@v1
+        uses: Baseline-quebec/.github/actions/licence-scan@v2
         with:
           mode: observation
           rapport-json: ${{ runner.temp }}/rapport.json
