@@ -28,6 +28,6 @@ echo
 echo "Le scan s'execute maintenant sur les pull requests de l'organisation."
 echo "Il ne bloque rien tant que l'action reste en mode observation."
 echo
-echo "Pour rendre le scan bloquant, une fois le bruit mesure et cure :"
-echo "  1. mode: bloquant dans .github/workflows/licence-scan.yml"
-echo "  2. git tag -f v1 && git push -f origin v1"
+echo "Pour rendre un scan bloquant, une fois le bruit mesure et cure :"
+echo "  1. mode: bloquant sur l'etape voulue de .github/workflows/conformite.yml"
+echo "  2. git tag -f v2 && git push -f origin v2"
