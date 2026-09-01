@@ -26,10 +26,21 @@ NOM_RULESET="Conformité Baseline"
 # nommait pas : le script aurait donc reconstruit un perimetre PLUS large que
 # le vrai apres un incident. C'est exactement le genre d'ecart qu'un fichier
 # cense etre la source de verite ne doit pas porter.
+#
+# bswh-baylee et serko-northsky : depots hors maintenance Baseline depuis le
+# 2026-09-01. Plus personne n'y traite les checks imposes sur les pull
+# requests, donc le scan n'a pas de destinataire.
+#
+# Cette exclusion ne porte QUE sur le scan en pull request. Le balayage mensuel
+# de tracking-llm-discontinued continue de couvrir ces deux depots et d'y
+# ouvrir des issues : les en sortir demande de les nommer aussi dans le
+# --exclude de son workflow org-sweep.yml. C'est delibere ici.
 EXCLUS=(
   "tracking-llm-discontinued"
   "Marketing"
   "Ventes"
+  "bswh-baylee"
+  "serko-northsky"
 )
 
 # Workflows imposes a tous les depots cibles, par chemin dans ce depot-ci.
