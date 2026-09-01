@@ -21,7 +21,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 RACINE = Path(__file__).resolve().parent.parent.parent
 
 # Un `uv run` qui execute un script DU DEPOT (`python "$ACTION_PATH/x.py"`), par
