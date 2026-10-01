@@ -22,6 +22,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _element(probleme: dict[str, Any]) -> str:
+    """Formate un constat en « paquet (licence) », ou ce qui en est connu."""
+    paquet = str(probleme.get("paquet") or "")
+    licence = str(probleme.get("licence") or "")
+    if paquet and licence:
+        return f"{paquet} ({licence})"
+    return paquet or licence
+
+
 def agreger(dossier: Path) -> tuple[list[dict[str, Any]], int]:
     """Fusionne les rapports par dépôt en une liste prête pour Slack.
 
@@ -44,11 +53,14 @@ def agreger(dossier: Path) -> tuple[list[dict[str, Any]], int]:
         if not problemes:
             continue
 
-        # Une licence peut toucher plusieurs paquets d'un même dépôt. Lister la
-        # licence une seule fois garde le message lisible ; le détail par paquet
-        # reste dans le résumé de job GitHub.
-        licences = sorted({str(p.get("licence", "")) for p in problemes if p.get("licence")})
-        depots.append({"depot": str(rapport.get("depot", "inconnu")), "elements": licences})
+        # Le paquet est nommé : une licence seule ne dit pas quoi remplacer. Le
+        # rapport du 2026-10-01 ne listait que les licences, et la première
+        # question en réponse a été « c'est quel paquet ? ».
+        elements = sorted(
+            {_element(p) for p in problemes if p.get("licence") or p.get("paquet")},
+            key=str.lower,
+        )
+        depots.append({"depot": str(rapport.get("depot", "inconnu")), "elements": elements})
 
     return depots, analyses
 

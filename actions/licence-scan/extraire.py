@@ -57,6 +57,8 @@ CLASSIFIERS: Final[dict[str, str]] = {
     "License :: Other/Proprietary License": "Proprietary",
 }
 
+USAGE_RESTREINT: Final[frozenset[str]] = frozenset({"Non-Commercial", "Proprietary"})
+
 # Au-delà de cette longueur, le champ `License` contient le texte de la licence
 # et non son nom. Certains paquets y collent les 11 kilo-octets de la GPL.
 LONGUEUR_MAX_NOM: Final[int] = 120
@@ -138,14 +140,31 @@ def licence_depuis_entetes(entetes: dict[str, list[str]]) -> str:
     if libre and len(libre) <= LONGUEUR_MAX_NOM and not _est_remplissage(libre):
         return libre
 
-    for classifier in entetes.get("Classifier", []):
-        if classifier.startswith("License ::"):
-            spdx = CLASSIFIERS.get(classifier.strip())
-            if spdx:
-                return spdx
-            # Classifier de licence inconnu : on remonte son dernier segment
-            # plutôt que de le taire, pour qu'il apparaisse au rapport.
-            return classifier.rsplit("::", 1)[-1].strip()
+    classifiers = [c.strip() for c in entetes.get("Classifier", []) if c.startswith("License ::")]
+    # « License :: OSI Approved » seul est une catégorie, pas une licence. À
+    # côté d'un classifier plus précis, il deviendrait une branche « acceptée »
+    # du OR ci-dessous et ferait passer n'importe quel copyleft.
+    classifiers = [
+        c for c in classifiers if not any(autre.startswith(f"{c} ::") for autre in classifiers)
+    ]
+    termes: list[str] = []
+    for classifier in classifiers:
+        # Classifier de licence inconnu : on remonte son dernier segment
+        # plutôt que de le taire, pour qu'il apparaisse au rapport.
+        terme = CLASSIFIERS.get(classifier) or classifier.rsplit("::", 1)[-1].strip()
+        if terme not in termes:
+            termes.append(terme)
+
+    # Un usage restreint n'est jamais une alternative : « non commercial OU
+    # MIT » ne doit pas se lire comme du MIT.
+    restreints = [terme for terme in termes if terme in USAGE_RESTREINT]
+    if restreints:
+        return restreints[0]
+    # Plusieurs classifiers de licence, c'est la façon dont un paquet antérieur
+    # à PEP 639 se déclare multi-licencié : pyphen porte GPLv2+, LGPLv2+ et
+    # MPL 1.1, au choix. Ne garder que le premier le signalait à tort en GPL.
+    if termes:
+        return " OR ".join(termes)
 
     # Le champ libre était trop long pour être un nom : on le signale comme
     # non déclaré plutôt que de charrier un texte de licence entier.
