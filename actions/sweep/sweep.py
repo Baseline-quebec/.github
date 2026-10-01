@@ -59,7 +59,7 @@ def lister_depots(exclus: set[str]) -> list[str]:
                 "--paginate",
                 f"/installation/repositories?per_page={TAILLE_PAGE}",
                 "--jq",
-                ".repositories[] | select(.archived == false) | .full_name",
+                '.repositories[] | select(.archived == false) | "\\(.full_name)\\t\\(.size)"',
             ],
             capture_output=True,
             text=True,
@@ -77,8 +77,39 @@ def lister_depots(exclus: set[str]) -> list[str]:
         logger.error("Impossible de lister les dépôts : %s", resultat.stderr.strip())
         return []
 
-    noms = [ligne.strip() for ligne in resultat.stdout.splitlines() if ligne.strip()]
-    return [n for n in noms if n not in exclus and n.split("/")[-1] not in exclus]
+    noms: list[str] = []
+    for ligne in resultat.stdout.splitlines():
+        nom, _, taille = ligne.strip().partition("\t")
+        if not nom or nom in exclus or nom.split("/")[-1] in exclus:
+            continue
+        # Un dépôt créé sans aucun commit n'a pas de branche : le checkout du
+        # job de matrice échoue sur « couldn't find remote ref ». Constaté avec
+        # munera-pdf-parser, rouge à chaque balayage depuis sa création.
+        if taille.strip() == "0" and not _a_une_branche(nom):
+            logger.warning("Dépôt vide ignoré, aucune branche : %s", nom)
+            continue
+        noms.append(nom)
+    return noms
+
+
+def _a_une_branche(depot: str) -> bool:
+    """Confirme qu'un dépôt annoncé à 0 Ko porte bien au moins une branche.
+
+    `size` seul ne suffit pas : un tout petit dépôt peut afficher 0 Ko. En cas
+    de doute, on garde le dépôt : un job rouge vaut mieux qu'un dépôt retiré du
+    rapport sans que personne ne le sache.
+    """
+    try:
+        resultat = subprocess.run(
+            ["gh", "api", f"repos/{depot}/branches?per_page=1", "--jq", "length"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DELAI_GH,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return True
+    return resultat.returncode != 0 or resultat.stdout.strip() != "0"
 
 
 def envoyer(type_rapport: str, depots: list[dict[str, Any]], analyses: int) -> bool:
