@@ -22,8 +22,8 @@ def test_depot_propre_compte_mais_napparait_pas(tmp_path: Path) -> None:
     assert analyses == 1
 
 
-def test_licence_dupliquee_nest_listee_quune_fois(tmp_path: Path) -> None:
-    """Trois paquets LGPL dans un dépôt ne font pas trois puces illisibles."""
+def test_chaque_element_nomme_son_paquet(tmp_path: Path) -> None:
+    """Une licence seule ne dit pas quoi remplacer : le paquet est nommé, une fois."""
     ecrire(
         tmp_path,
         "b",
@@ -31,14 +31,19 @@ def test_licence_dupliquee_nest_listee_quune_fois(tmp_path: Path) -> None:
             "depot": "org/touche",
             "interdites": [],
             "a_surveiller": [
-                {"paquet": "psycopg", "licence": "LGPL-3.0-only"},
-                {"paquet": "psycopg-binary", "licence": "LGPL-3.0-only"},
-                {"paquet": "autre", "licence": "GPL-2.0"},
+                {"paquet": "pyphen", "licence": "GPL-2.0-or-later"},
+                {"paquet": "codespell", "licence": "GPL-2.0-only"},
+                {"paquet": "codespell", "licence": "GPL-2.0-only"},
             ],
         },
     )
     depots, _ = agreger(tmp_path)
-    assert depots == [{"depot": "org/touche", "elements": ["GPL-2.0", "LGPL-3.0-only"]}]
+    assert depots == [
+        {
+            "depot": "org/touche",
+            "elements": ["codespell (GPL-2.0-only)", "pyphen (GPL-2.0-or-later)"],
+        }
+    ]
 
 
 def test_rapport_illisible_ninterrompt_pas_lagregation(tmp_path: Path) -> None:
@@ -61,7 +66,7 @@ def test_interdites_et_surveiller_sont_fusionnees(tmp_path: Path) -> None:
         },
     )
     depots, _ = agreger(tmp_path)
-    assert depots[0]["elements"] == ["AGPL-3.0", "BUSL-1.1"]
+    assert depots[0]["elements"] == ["x (BUSL-1.1)", "y (AGPL-3.0)"]
 
 
 def test_main_ecrit_le_resume_lu_ensuite_par_sweep(tmp_path: Path) -> None:

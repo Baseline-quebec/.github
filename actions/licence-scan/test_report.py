@@ -97,11 +97,15 @@ def test_boost_nest_pas_confondu_avec_business_source(politique: Politique) -> N
     assert verdict_de(politique, "hashicorp", "BSL-1.1") is Verdict.INTERDITE
 
 
-@pytest.mark.parametrize(
-    "licence", ["GPL-2.0", "GPL-3.0-or-later", "LGPL-2.1", "EUPL-1.2", "CC-BY-SA-4.0"]
-)
+@pytest.mark.parametrize("licence", ["GPL-2.0", "GPL-3.0-or-later", "EUPL-1.2", "CC-BY-SA-4.0"])
 def test_copyleft_signale_sans_bloquer(politique: Politique, licence: str) -> None:
     assert verdict_de(politique, "paquet", licence) is Verdict.A_SURVEILLER
+
+
+@pytest.mark.parametrize("licence", ["LGPL-2.1", "LGPL-3.0-only", "LGPL-3.0-or-later"])
+def test_lgpl_est_acceptee(politique: Politique, licence: str) -> None:
+    """Importer une bibliothèque LGPL non modifiée est conforme, même livré."""
+    assert verdict_de(politique, "psycopg", licence) is Verdict.ACCEPTEE
 
 
 @pytest.mark.parametrize(
@@ -125,15 +129,68 @@ def test_metadonnees_en_texte_libre_sont_normalisees(brut: str, attendu: str) ->
     assert normaliser(brut) == [attendu]
 
 
-def test_expression_composee_evaluee_terme_par_terme(politique: Politique) -> None:
-    """Un paquet double-licencié MIT ou GPL doit remonter le terme GPL.
+def verdicts_de(politique: Politique, licence: str) -> list[tuple[str, Verdict]]:
+    constats = analyser(rapport_trivy({"paquet": licence}), politique)
+    return [(c.licence, c.verdict) for c in constats]
 
-    Le choix du terme applicable est une décision humaine. L'outil signale le
-    terme le plus contraignant plutôt que de trancher seul.
+
+def test_or_est_un_choix_et_retient_la_branche_favorable(politique: Politique) -> None:
+    """Cas réel de node-forge : BSD-3-Clause ou GPL-2.0, au choix du licencié.
+
+    Le signaler en GPL, comme le rapport du 2026-10-01 dans trois dépôts,
+    revient à ignorer qu'on l'utilise sous BSD.
     """
-    assert normaliser("(MIT OR GPL-3.0)") == ["MIT", "GPL-3.0"]
-    constats = analyser(rapport_trivy({"dual": "(MIT OR GPL-3.0)"}), politique)
-    verdicts = {c.verdict for c in constats}
+    assert verdicts_de(politique, "(BSD-3-Clause OR GPL-2.0)") == [
+        ("BSD-3-Clause", Verdict.ACCEPTEE)
+    ]
+
+
+def test_or_de_pyphen_tel_quextrait_passe(politique: Politique) -> None:
+    licence = "GPL-2.0-or-later OR LGPL-2.0-or-later OR Mozilla Public License 1.1 (MPL 1.1)"
+    assert {v for _, v in verdicts_de(politique, licence)} == {Verdict.ACCEPTEE}
+
+
+def test_parenthese_apres_un_terme_fait_partie_du_nom(politique: Politique) -> None:
+    """« GNU General Public License v3 (GPLv3) » n'est pas un groupe à évaluer."""
+    licence = "GNU General Public License v3 (GPLv3) OR BUSL-1.1"
+    assert verdicts_de(politique, licence) == [("GPL-3.0", Verdict.A_SURVEILLER)]
+
+
+def test_and_impose_toutes_les_branches(politique: Politique) -> None:
+    assert ("GPL-3.0", Verdict.A_SURVEILLER) in verdicts_de(politique, "MIT AND GPL-3.0")
+
+
+def test_or_entre_interdite_et_copyleft_retient_le_copyleft(politique: Politique) -> None:
+    assert verdicts_de(politique, "BUSL-1.1 OR GPL-3.0") == [("GPL-3.0", Verdict.A_SURVEILLER)]
+
+
+def test_or_entre_deux_interdites_reste_bloquant(politique: Politique) -> None:
+    verdicts = {v for _, v in verdicts_de(politique, "BUSL-1.1 OR SSPL-1.0")}
+    assert verdicts == {Verdict.INTERDITE}
+
+
+def test_and_lie_plus_fort_que_or(politique: Politique) -> None:
+    """Précédence SPDX : « A OR B AND C » se lit « A OR (B AND C) »."""
+    assert verdicts_de(politique, "MIT OR GPL-3.0 AND BUSL-1.1") == [("MIT", Verdict.ACCEPTEE)]
+    verdicts = verdicts_de(politique, "(MIT OR GPL-3.0) AND BUSL-1.1")
+    assert ("BUSL-1.1", Verdict.INTERDITE) in verdicts
+
+
+def test_or_minuscule_du_texte_libre_nest_pas_un_choix(politique: Politique) -> None:
+    """« GPLv2 or later » est un nom : en faire un choix laisserait passer « later »."""
+    verdicts = {v for _, v in verdicts_de(politique, "GPLv2 or later")}
+    assert Verdict.A_SURVEILLER in verdicts
+
+
+def test_with_garde_la_licence_de_base(politique: Politique) -> None:
+    assert verdicts_de(politique, "GPL-2.0-only WITH Classpath-exception-2.0") == [
+        ("GPL-2.0-only", Verdict.A_SURVEILLER)
+    ]
+
+
+def test_expression_mal_formee_retombe_sur_tous_les_termes(politique: Politique) -> None:
+    """En cas de doute, on signale : une parenthèse orpheline ne fait rien taire."""
+    verdicts = {v for _, v in verdicts_de(politique, "(MIT OR GPL-3.0")}
     assert Verdict.A_SURVEILLER in verdicts
 
 

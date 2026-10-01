@@ -93,6 +93,12 @@ runs:
     # niveau d'application vit donc ici, dans `mode`, et non dans le ruleset.
     # Sans ce garde-fou, un dépôt dont l'installation casse verrouillerait ses
     # pull requests alors qu'on cherche seulement à mesurer.
+    #
+    # Les dépendances de développement ne sont pas installées : un linter ou un
+    # générateur de projet ne part dans aucune livraison, et sa licence ne nous
+    # engage à rien. codespell (GPL-2.0) et jinja2-ansible-filters (GPL-3.0, via
+    # copier) faisaient la moitié du rapport du 2026-10-01. Les extras restent
+    # installés : ce sont des dépendances d'exécution optionnelles.
     - name: Installer les dépendances Python
       if: steps.detection.outputs.python != 'aucun'
       shell: bash
@@ -105,12 +111,12 @@ runs:
         installer() {
           case "$GESTIONNAIRE" in
             uv)
-              uv sync --all-extras --frozen
+              uv sync --all-extras --frozen --no-default-groups
               ;;
             poetry)
               uv tool install poetry
               poetry config virtualenvs.in-project true --local
-              poetry install --no-interaction --no-root
+              poetry install --no-interaction --no-root --only main
               ;;
             pip)
               uv venv
@@ -138,6 +144,11 @@ runs:
     # --ignore-scripts : les scripts postinstall ne changent rien aux licences
     # déclarées et exécuter du code arbitraire de dépendances tierces dans la CI
     # est une surface d'attaque gratuite.
+    #
+    # Les devDependencies sont omises, comme côté Python. Limite connue : une
+    # application front compilée embarque ce que le bundler importe, y compris
+    # une devDependency mal rangée. Yarn Berry n'a pas d'installation sans dev :
+    # il reste scanné en entier.
     - name: Installer les dépendances Node
       if: steps.detection.outputs.node != 'aucun'
       shell: bash
@@ -150,16 +161,16 @@ runs:
         installer() {
           case "$GESTIONNAIRE" in
             npm)
-              npm ci --ignore-scripts
+              npm ci --ignore-scripts --omit=dev
               ;;
             pnpm)
               corepack enable
-              pnpm install --frozen-lockfile --ignore-scripts
+              pnpm install --frozen-lockfile --ignore-scripts --prod
               ;;
             yarn)
               corepack enable
               yarn install --immutable --mode=skip-build ||
-                yarn install --frozen-lockfile --ignore-scripts
+                yarn install --frozen-lockfile --ignore-scripts --production
               ;;
           esac
         }

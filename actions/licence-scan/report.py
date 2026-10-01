@@ -17,6 +17,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -61,6 +62,13 @@ MARQUEURS_INCONNUE: Final[frozenset[str]] = frozenset(
 
 SEPARATEURS: Final[re.Pattern[str]] = re.compile(r"\s+(?:AND|OR|WITH)\s+|[;,/]", re.IGNORECASE)
 
+# Découpe une expression SPDX en parenthèses, opérateurs et termes, en gardant
+# les délimiteurs. Les termes peuvent contenir des espaces (« GNU General Public
+# License v3 ») : on ne découpe donc jamais sur l'espace seul.
+# Sensible à la casse, comme les opérateurs SPDX : le « or » de « GPLv2 or
+# later » fait partie du nom, et en faire un choix laisserait passer « later ».
+JETONS: Final[re.Pattern[str]] = re.compile(r"(\(|\)|\s+AND\s+|\s+OR\s+|\s+WITH\s+)")
+
 
 class Verdict(Enum):
     """Résultat de la classification d'une licence."""
@@ -70,6 +78,17 @@ class Verdict(Enum):
     INCONNUE = "inconnue"
     ACCEPTEE = "acceptee"
     EXEMPTEE = "exemptee"
+
+
+# Du plus favorable au plus contraignant. Sert à choisir la branche d'un OR
+# et à retenir le terme décisif d'un AND.
+GRAVITE: Final[dict[Verdict, int]] = {
+    Verdict.ACCEPTEE: 0,
+    Verdict.EXEMPTEE: 1,
+    Verdict.A_SURVEILLER: 2,
+    Verdict.INCONNUE: 3,
+    Verdict.INTERDITE: 4,
+}
 
 
 @dataclass(frozen=True)
@@ -150,10 +169,10 @@ def est_inconnue(licence: str) -> bool:
 def normaliser(brut: str) -> list[str]:
     """Découpe une expression de licence et normalise chaque terme en SPDX.
 
-    « (MIT OR Apache-2.0) » donne ["MIT", "Apache-2.0"]. Une expression
-    composée est évaluée terme par terme, donc un paquet double-licencié
-    MIT ou GPL sera signalé sur le terme GPL. C'est délibérément prudent :
-    le choix du terme applicable est une décision humaine, pas automatique.
+    « (MIT OR Apache-2.0) » donne ["MIT", "Apache-2.0"]. Cette fonction ne
+    tranche pas entre les termes : c'est `retenir` qui applique le sens des
+    opérateurs. Elle sert seule pour les séparateurs de texte libre (`;`, `,`,
+    `/`), dont le sens est ambigu et qui sont donc traités comme un AND.
     """
     nettoye = brut.strip().strip("()").strip()
     if not nettoye:
@@ -173,6 +192,121 @@ def normaliser(brut: str) -> list[str]:
     return termes or [""]
 
 
+class _Analyseur:
+    """Évalue une expression SPDX en ne gardant que les termes qui décident.
+
+    Grammaire, du plus lâche au plus serré : `OR`, puis `AND`, puis `WITH`.
+    Un `OR` est un choix laissé au licencié : on retient la branche la plus
+    favorable, puisque c'est celle sous laquelle Baseline utilisera le paquet.
+    Un `AND` impose toutes ses branches : on les retient toutes. Un `WITH`
+    ajoute une exception qui élargit les droits (Classpath, LLVM) : on garde la
+    licence de base, ce qui ne peut que surestimer la contrainte.
+    """
+
+    def __init__(self, jetons: list[str], gravite: Callable[[str], int]) -> None:
+        self.jetons = jetons
+        self.position = 0
+        self.gravite = gravite
+
+    def _suivant(self) -> str:
+        return self.jetons[self.position] if self.position < len(self.jetons) else ""
+
+    def _consommer(self) -> str:
+        jeton = self._suivant()
+        self.position += 1
+        return jeton
+
+    def _pire(self, termes: list[str]) -> int:
+        return max((self.gravite(terme) for terme in termes), default=0)
+
+    def ou(self) -> list[str]:
+        meilleure = self.et()
+        while self._suivant() == "OR":
+            self._consommer()
+            branche = self.et()
+            if self._pire(branche) < self._pire(meilleure):
+                meilleure = branche
+        return meilleure
+
+    def et(self) -> list[str]:
+        termes = self.atome()
+        while self._suivant() == "AND":
+            self._consommer()
+            termes = termes + self.atome()
+        return termes
+
+    def atome(self) -> list[str]:
+        jeton = self._consommer()
+        if jeton == "(":
+            termes = self.ou()
+            if self._consommer() != ")":
+                raise ValueError("parenthèse non fermée")
+            return termes
+        if jeton in {"", ")", "AND", "OR", "WITH"}:
+            raise ValueError(f"terme attendu, reçu {jeton!r}")
+        if self._suivant() == "WITH":
+            self._consommer()
+            self._consommer()
+        return normaliser(jeton)
+
+
+OPERATEURS: Final[frozenset[str]] = frozenset({"AND", "OR", "WITH"})
+
+
+def _decouper(brut: str) -> list[str]:
+    """Découpe une expression en jetons pour `_Analyseur`.
+
+    Une parenthèse qui suit directement un terme n'ouvre pas un groupe : elle
+    fait partie de son nom, comme dans « Mozilla Public License 1.1 (MPL 1.1) »,
+    que pyphen déclare par classifier. Sans cette règle, l'expression entière
+    serait jugée mal formée.
+    """
+    morceaux = [m.strip() for m in JETONS.split(brut.strip()) if m.strip()]
+    jetons: list[str] = []
+    position = 0
+    while position < len(morceaux):
+        morceau = morceaux[position]
+        precedent = jetons[-1] if jetons else "("
+        if morceau == "(" and precedent not in OPERATEURS and precedent not in {"(", ")"}:
+            profondeur, fin = 1, position + 1
+            while fin < len(morceaux) and profondeur:
+                profondeur += {"(": 1, ")": -1}.get(morceaux[fin], 0)
+                fin += 1
+            if profondeur:
+                # Parenthèse jamais fermée : on la laisse au parseur, qui
+                # rejettera l'expression et déclenchera le repli prudent.
+                jetons.append(morceau)
+                position += 1
+                continue
+            jetons[-1] = f"{precedent} ({' '.join(morceaux[position + 1 : fin - 1])})"
+            position = fin
+            continue
+        jetons.append(morceau)
+        position += 1
+    return jetons
+
+
+def retenir(brut: str, gravite: Callable[[str], int]) -> list[str]:
+    """Retourne les termes normalisés qui déterminent le verdict d'une expression.
+
+    « MIT OR GPL-3.0 » retient ["MIT"], « MIT AND GPL-3.0 » retient les deux.
+    Une expression mal formée retombe sur l'évaluation terme par terme, qui
+    retient tout : en cas de doute, on signale plutôt que de taire.
+    """
+    jetons = _decouper(brut)
+    if not jetons:
+        return [""]
+
+    analyseur = _Analyseur(jetons, gravite)
+    try:
+        termes = analyseur.ou()
+        if analyseur.position != len(jetons):
+            raise ValueError("jetons restants")
+    except ValueError:
+        return normaliser(brut)
+    return termes
+
+
 def extraire(rapport: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Extrait les triplets (cible, paquet, licence brute) du JSON de Trivy."""
     trouvailles: list[tuple[str, str, str]] = []
@@ -188,7 +322,11 @@ def analyser(rapport: dict[str, Any], politique: Politique) -> list[Constat]:
     constats: list[Constat] = []
     vus: set[tuple[str, str]] = set()
     for cible, paquet, brut in extraire(rapport):
-        for licence in normaliser(brut):
+
+        def gravite(terme: str, paquet: str = paquet) -> int:
+            return GRAVITE[politique.classifier(paquet, terme)]
+
+        for licence in retenir(brut, gravite):
             cle = (paquet.lower(), licence.lower())
             if cle in vus:
                 continue

@@ -226,9 +226,19 @@ dépendance installée, `report.py` la classe contre la politique.
 | Catégorie | Effet | Exemples |
 |---|---|---|
 | `interdites` | Bloque la fusion | CC-BY-NC, PolyForm, Commons Clause, BUSL-1.1, SSPL, Elastic-2.0, RSAL, **AGPL** |
-| `a_surveiller` | Signale sans bloquer | GPL, LGPL, EUPL, CC-BY-SA |
-| `ignorees` | Silencieux | MIT, Apache-2.0, BSD, ISC, MPL-2.0 |
+| `a_surveiller` | Signale sans bloquer | GPL, EUPL, CC-BY-SA, CC-BY-ND |
+| `ignorees` | Silencieux | MIT, Apache-2.0, BSD, ISC, MPL-2.0, LGPL |
 | `licence_inconnue` | Signale sans bloquer | Métadonnée absente ou illisible |
+
+Seules les dépendances d'exécution sont analysées : `uv sync --no-default-groups`,
+`poetry install --only main`, `npm ci --omit=dev`, `pnpm install --prod`. Un
+linter ou un générateur de projet ne part dans aucune livraison.
+
+Une expression `A OR B` est un choix du licencié : la branche la plus favorable
+décide. `A AND B` impose les deux, `A WITH exception` est jugée sur `A`. Plusieurs
+classifiers de licence sur un même paquet Python se lisent comme un `OR`, sauf si
+l'un d'eux est à usage restreint (non commercial, propriétaire) : celui-là décide
+seul.
 
 ### Demander une exception
 
@@ -322,10 +332,24 @@ rassurant.
 **L'AGPL est bloquante, le GPL ne l'est pas.** Décision d'équipe : l'AGPL
 contamine dès qu'un service est exposé, ce qui est le cas de la plupart des
 livraisons Baseline. Cas concret ayant motivé la règle, PyMuPDF, dont l'usage
-commercial exige une licence payante, à remplacer par `pypdfium2`. Le GPL et le
-LGPL restent un arbitrage humain selon le mode de livraison. Les motifs sont
-ancrés pour que la règle AGPL n'attrape pas le GPL au passage ; un test le
-vérifie.
+commercial exige une licence payante, à remplacer par `pypdfium2`. Le GPL reste
+un arbitrage humain selon le mode de livraison : sans effet pour un service
+hébergé chez nous, il s'applique dès que le code est remis au client ou déployé
+chez lui. Le LGPL est accepté depuis le 2026-10-01 : importer une bibliothèque
+LGPL sans la modifier est conforme même livré, et c'est notre seul usage. Les
+motifs sont ancrés pour que la règle AGPL n'attrape pas le GPL au passage, ni la
+règle LGPL ; des tests le vérifient.
+
+**Un `or` en minuscules n'est pas un choix.** Les opérateurs SPDX sont lus en
+majuscules seulement. « GPLv2 or later » est un nom de licence : y voir un choix
+laisserait passer le terme « later », classé acceptable faute de motif. Une
+expression mal formée, parenthèse orpheline par exemple, retombe sur l'évaluation
+terme par terme, qui signale tout.
+
+**Une devDependency peut quand même être livrée.** Le scan omet les dépendances
+de dev, mais une application front compilée embarque tout ce que le bundler
+importe, y compris une dépendance mal rangée en `devDependencies`. Yarn Berry n'a
+pas d'installation sans dev et reste donc scanné en entier.
 
 **`BSL-1.0` n'est pas `BSL-1.1`.** La première est la Boost Software License,
 permissive. La seconde est un alias courant de la Business Source License,

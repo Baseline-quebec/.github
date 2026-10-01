@@ -47,7 +47,6 @@ interdites:
 a_surveiller:
   motifs:
     - "GPL-[0-9.]+(-only|-or-later)?"
-    - "LGPL-[0-9.]+(-only|-or-later)?"
     - "OSL-[0-9.]+"
     - "EUPL-[0-9.]+"
     - "CC-BY-SA-[0-9.]+"
@@ -72,6 +71,12 @@ ignorees:
     - "CC-BY-[0-9.]+"
     - "Python-2\\.0"
     - "PSF-2\\.0"
+    # LGPL : copyleft faible, qui ne s'étend pas au code qui importe la
+    # bibliothèque sans la modifier. C'est notre seul usage, en Python comme en
+    # Node, et il reste conforme même quand le code est livré au client. Retirée
+    # de `a_surveiller` le 2026-10-01 : psycopg, svglib, sharp-libvips et
+    # rpc-websockets y faisaient tout le bruit, sans un seul arbitrage utile.
+    - "LGPL-[0-9.]+(-only|-or-later)?"
     - "Zlib"
     - "MPL-2\\.0"
     - "BSL-1\\.0"                 # Boost, permissive, à ne pas confondre avec BUSL-1.1

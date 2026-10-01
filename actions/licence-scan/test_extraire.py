@@ -99,6 +99,46 @@ def test_classifier_dusage_restreint_est_remonte() -> None:
     assert licence_depuis_entetes(entetes) == "Non-Commercial"
 
 
+def test_plusieurs_classifiers_de_licence_sont_un_choix() -> None:
+    """Cas réel de pyphen : trois licences au choix, sans License-Expression.
+
+    Ne lire que le premier classifier le faisait signaler en GPL dans le
+    rapport du 2026-10-01, alors que le paquet est aussi offert sous MPL.
+    """
+    entetes = _lire_entetes(
+        "Name: pyphen\n"
+        "Classifier: License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)\n"
+        "Classifier: License :: OSI Approved :: GNU Lesser General Public License v2 or later"
+        " (LGPLv2+)\n"
+        "Classifier: License :: OSI Approved :: Mozilla Public License 1.1 (MPL 1.1)\n\ncorps"
+    )
+    assert licence_depuis_entetes(entetes) == (
+        "GPL-2.0-or-later OR LGPL-2.0-or-later OR Mozilla Public License 1.1 (MPL 1.1)"
+    )
+
+
+def test_classifier_categorie_nest_pas_une_alternative() -> None:
+    """« OSI Approved » seul deviendrait une branche acceptée du OR.
+
+    Un paquet GPL qui porte aussi le classifier parent passerait alors pour
+    permissif, sans aucun signal.
+    """
+    entetes = _lire_entetes(
+        "Name: gpl\nClassifier: License :: OSI Approved\n"
+        "Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)\n\ncorps"
+    )
+    assert licence_depuis_entetes(entetes) == "GPL-3.0"
+
+
+def test_usage_restreint_nest_jamais_une_alternative() -> None:
+    """Non commercial à côté de MIT reste non commercial : le pire faux négatif."""
+    entetes = _lire_entetes(
+        "Name: piege\nClassifier: License :: OSI Approved :: MIT License\n"
+        "Classifier: License :: Free for non-commercial use\n\ncorps"
+    )
+    assert licence_depuis_entetes(entetes) == "Non-Commercial"
+
+
 def test_entetes_sarretent_a_la_premiere_ligne_vide() -> None:
     """La description longue suit les en-têtes et contient souvent le mot License.
 
