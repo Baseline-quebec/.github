@@ -11,6 +11,7 @@ import json
 import subprocess
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,42 @@ def test_exclusion_accepte_le_nom_court_et_le_nom_complet(
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: FauxResultat(0, "org/a\norg/b\norg/c\n"))
     assert lister_depots({".github", "b"}) == ["org/a", "org/c"]
     assert lister_depots({"org/a"}) == ["org/b", "org/c"]
+
+
+def faux_gh(branches: dict[str, FauxResultat]) -> Callable[..., FauxResultat]:
+    """Simule l'énumération, puis l'appel des branches pour chaque dépôt à 0 Ko."""
+
+    def run(commande: list[str], **_: object) -> FauxResultat:
+        if "/installation/repositories" in commande[3]:
+            return FauxResultat(0, "org/plein\t120\norg/vide\t0\norg/minuscule\t0\n")
+        depot = commande[2].removeprefix("repos/").split("/branches")[0]
+        return branches[depot]
+
+    return run
+
+
+def test_depot_sans_branche_est_ignore(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cas réel de munera-pdf-parser : vide, donc un checkout rouge chaque mois."""
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        faux_gh({"org/vide": FauxResultat(0, "0\n"), "org/minuscule": FauxResultat(0, "1\n")}),
+    )
+    assert lister_depots(set()) == ["org/plein", "org/minuscule"]
+
+
+def test_depot_a_zero_ko_est_garde_si_les_branches_sont_illisibles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """En cas de doute on garde : un job rouge vaut mieux qu'un dépôt disparu."""
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        faux_gh(
+            {"org/vide": FauxResultat(1, "", "HTTP 502"), "org/minuscule": FauxResultat(0, "1\n")}
+        ),
+    )
+    assert lister_depots(set()) == ["org/plein", "org/vide", "org/minuscule"]
 
 
 def test_echec_de_gh_rend_une_liste_vide(monkeypatch: pytest.MonkeyPatch) -> None:
