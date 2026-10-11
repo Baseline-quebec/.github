@@ -102,11 +102,29 @@ jobs:
           # passe avant un .gitleaks.toml du dépôt, qui pourrait sinon y
           # ajouter des exclusions. Commentaires gitleaks:allow et
           # .gitleaksignore ignorés pour la même raison.
+          #
+          # `--gitleaks-ignore-path /dev/null` ne suffit PAS : gitleaks lit en
+          # plus le .gitleaksignore à la racine de la source. Vérifié le
+          # 2026-10-11 avec l'image épinglée : une empreinte
+          # « /src/<chemin>:<règle>:<ligne> » y fait taire le constat. Le
+          # fichier est donc retiré de l'espace de travail (le checkout jetable
+          # du runner, pas le dépôt), puis remis pour les étapes suivantes.
+          ignore_present=false
+          if [ -e .gitleaksignore ] || [ -L .gitleaksignore ]; then
+            ignore_present=true
+            echo "::warning title=gitleaks::.gitleaksignore du dépôt non pris en compte (décision D3 : aucune exclusion)."
+            mv .gitleaksignore "$RUNNER_TEMP/gitleaksignore.depot"
+          fi
+          statut=0
           docker run --rm -v "$PWD":/src:ro \
             -e GITLEAKS_CONFIG_TOML=$'[extend]\nuseDefault = true' \
             ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
             dir /src --redact --no-banner --ignore-gitleaks-allow \
-            --gitleaks-ignore-path /dev/null --exit-code 1
+            --gitleaks-ignore-path /dev/null --exit-code 1 || statut=$?
+          if [ "$ignore_present" = true ]; then
+            mv "$RUNNER_TEMP/gitleaksignore.depot" .gitleaksignore
+          fi
+          exit "$statut"
 
       - name: Analyser les dépendances
         id: cve
