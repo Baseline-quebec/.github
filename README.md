@@ -12,11 +12,12 @@ Le périmètre est « tous les dépôts sauf `tracking-llm-discontinued`,
 par un test.
 
 Un seul workflow est imposé, `.github/workflows/conformite.yml`, déclenché sur
-pull request et merge queue. Il porte les quatre contrôles comme étapes nommées
+pull request et merge queue. Il porte les cinq contrôles comme étapes nommées
 d'un même job :
 
 | Étape | Action | Durée moyenne |
 |---|---|---|
+| Configuration Sentry | `actions/sentry-config` | 3 s |
 | CVE des dépendances verrouillées | `actions/cve-scan` | 28 s |
 | Références aux modèles dépréciés | `tracking-llm-discontinued` | 31 s |
 | Licences des dépendances | `actions/licence-scan` | 38 s |
@@ -40,6 +41,11 @@ ils référencent leur action par le tag majeur courant, que la pull request qui
 introduit un contrôle n'a pas encore déplacé. La CI les exerce par leur chemin local
 (`./actions/...`), ce que l'exécution imposée ne peut pas faire, donc chaque
 modification est bien testée de bout en bout avant la fusion.
+
+Le contrôle de configuration Sentry est **bloquant** dès sa mise en service :
+c'est la condition posée par le Directeur général le 2026-10-10 pour garder
+Sentry (NORM-TI-DEV-01, section 9), et il ne lit que le source, donc il n'a pas
+de bruit à mesurer d'abord. Voir [Configuration Sentry](#configuration-sentry).
 
 Les deux contrôles de sécurité sont en **mode observation** : ils produisent
 leur rapport et n'empêchent aucune fusion. Passer au mode bloquant se fait dans
@@ -77,6 +83,31 @@ La détection vit dans `actions/secaudit-code/detecter.sh` plutôt que dans un
 bloc `run:`, précisément pour être testable. Une racine inexistante y est une
 erreur, pas un « rien à analyser » : l'audit passerait au vert sans avoir rien
 scanné.
+
+### Configuration Sentry
+
+`actions/sentry-config` fait échouer la pull request quand le code applicatif
+initialise Sentry sans le masquage imposé. L'organisation Sentry est aux
+États-Unis et reçoit les erreurs des applications de clients ; une erreur emporte
+ce que le code avait en main quand il a échoué.
+
+| Langage | Échoue quand |
+|---|---|
+| Python | un `sentry_sdk.init(...)` ne passe pas explicitement `send_default_pii=False`, `include_local_variables=False` et un `before_send` autre que `None` |
+| JS / TS | un `Sentry.init(...)`, un `init` importé de `@sentry/*` ou un `sentryCloudflareNitroPlugin(...)` n'a pas `sendDefaultPii: false` et un `beforeSend`, sauf options issues de `baselineSentryOptions(...)` |
+
+« Explicitement » est voulu : le défaut du SDK Python pour
+`include_local_variables` est `True`, c'est la fuite principale et elle est
+automatique. Un `**options` est suivi jusqu'à un dict littéral ou une fonction du
+même fichier qui en rend un ; des options JS construites ailleurs sont suivies
+jusqu'à la fonction importée par chemin relatif. Ce qui ne se lit pas est un
+constat « non vérifiable », jamais un succès. Les tests, les dépendances
+installées et les sorties de build sont exclus.
+
+Le remède est la configuration de référence du gabarit
+[`project-bootstrap-template`](https://github.com/Baseline-quebec/project-bootstrap-template),
+`observability/sentry/` et `docs/sentry.md`. Une exemption se demande dans
+`actions/sentry-config/politique.yaml`, ancrée sur `<dépôt>:<chemin>` et datée.
 
 ### Vulnérabilités des dépendances
 

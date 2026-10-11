@@ -1,0 +1,18 @@
+# Politique du contrôle de configuration Sentry
+#
+# Seule source de vérité de ce qui bloque. Chaque manquement est de sévérité
+# ELEVEE (voir verifier.py, Constat.severite) : il n'y a pas de demi-fuite, un
+# appel sans masquage envoie aux États-Unis ce que le code avait en main.
+bloquantes:
+  - CRITIQUE
+  - ELEVEE
+
+# Fichiers qu'on accepte de ne pas bloquer, pour un temps borné.
+#
+# `regle` est une expression régulière ancrée sur « <dépôt>:<chemin> », par
+# exemple "Baseline-quebec/mon-depot:src/legacy/sentry\\.py". Pas sur la ligne :
+# elle bouge à chaque modification et l'exemption cesserait de s'appliquer en
+# silence. `justification` dit pourquoi le masquage est assuré autrement, pas ce
+# que fait le contrôle. `expire` est obligatoire : la CI refuse une exemption
+# sans date, et une exemption échue redevient bloquante d'elle-même.
+exemptions: []
