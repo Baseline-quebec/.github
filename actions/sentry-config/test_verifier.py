@@ -338,6 +338,16 @@ def test_js_pii_sans_before_send() -> None:
     assert codes_js(source) == ["beforeSend-absent"]
 
 
+@pytest.mark.parametrize("valeur", ["null", "undefined"])
+def test_js_before_send_nul(valeur: str) -> None:
+    """`beforeSend: null` n'expurge rien, comme `before_send=None` en Python."""
+    source = f"""
+    import * as Sentry from '@sentry/vue'
+    Sentry.init({{ dsn, sendDefaultPii: false, beforeSend: {valeur} }})
+    """
+    assert codes_js(source) == ["beforeSend-absent"]
+
+
 def test_js_pii_vraies() -> None:
     source = """
     import * as Sentry from '@sentry/browser'

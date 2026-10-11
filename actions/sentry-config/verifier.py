@@ -447,7 +447,11 @@ _ENVELOPPES: Final = ("sentryCloudflareNitroPlugin", "withSentry")
 
 _PII_VRAI_JS: Final = re.compile(r"\bsendDefaultPii\s*:\s*true\b")
 _PII_FAUX_JS: Final = re.compile(r"\bsendDefaultPii\s*:\s*false\b")
-_BEFORE_SEND_JS: Final = re.compile(r"\bbeforeSend\s*(?:[:(]|(?=\s*[,}]))")
+# `beforeSend: null` ou `undefined` ne compte pas, comme `before_send=None` en
+# Python : rien n'expurge l'événement.
+_BEFORE_SEND_JS: Final = re.compile(
+    r"\bbeforeSend\s*(?::(?!\s*(?:null|undefined)\b)|\(|(?=\s*[,}]))"
+)
 
 
 def _appels_init_js(texte: str) -> list[int]:
