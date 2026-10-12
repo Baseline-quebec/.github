@@ -17,7 +17,7 @@ d'un même job :
 
 | Étape | Action | Durée moyenne |
 |---|---|---|
-| Secrets en clair, bloquant | gitleaks (image épinglée par empreinte) | à mesurer |
+| Secrets en clair, avertissement jusqu'au 2026-11-01 puis bloquant | gitleaks (image épinglée par empreinte) | à mesurer |
 | CVE des dépendances verrouillées | `actions/cve-scan` | 28 s |
 | Références aux modèles dépréciés | `tracking-llm-discontinued` | 31 s |
 | Licences des dépendances | `actions/licence-scan` | 38 s |

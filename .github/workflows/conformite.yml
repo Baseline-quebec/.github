@@ -83,7 +83,8 @@ jobs:
       # nomment donc leur version (`uv run --python`), et un test le garde. Ne
       # jamais supposer qu'une étape retrouve l'environnement d'origine.
       # Décision D3 du Directeur général, 2026-10-09 (audit GitHub, écart B3) :
-      # gitleaks sur l'arbre du dépôt, BLOQUANT quel que soit `mode`, sans
+      # gitleaks sur l'arbre du dépôt, BLOQUANT quel que soit `mode` (après la
+      # période d'avertissement qui finit le 2026-11-01), sans
       # liste d'exclusion ni fichier .gitleaksignore pris en compte. Il passe
       # avant les autres étapes : licence-scan installe node_modules dans
       # l'espace de travail, ce qui produirait des faux positifs ici.
@@ -123,6 +124,14 @@ jobs:
             --gitleaks-ignore-path /dev/null --exit-code 1 || statut=$?
           if [ "$ignore_present" = true ]; then
             mv "$RUNNER_TEMP/gitleaksignore.depot" .gitleaksignore
+          fi
+          # Période d'avertissement (décision du DG, 2026-10-12, sur l'avis
+          # d'Émile Turcotte) : jusqu'au 2026-11-01 inclus, un secret trouvé
+          # avertit sans bloquer, le temps de faire tourner les secrets connus.
+          # Bloquant à partir du 2026-11-02 (UTC), sans autre changement.
+          if [ "$statut" -ne 0 ] && [ "$(date -u +%Y%m%d)" -lt 20261102 ]; then
+            echo "::warning title=gitleaks::Secret en clair trouvé. Avertissement seulement jusqu'au 2026-11-01 : ce contrôle devient bloquant le 2026-11-02. Faites tourner le secret et retirez-le du code."
+            exit 0
           fi
           exit "$statut"
 
@@ -182,7 +191,7 @@ jobs:
             echo "| Références aux modèles dépréciés | $MODELES |"
             echo "| Licences des dépendances | $LICENCES |"
             echo "| Secrets, code et configuration | $SECURITE |"
-            echo "| Secrets en clair (gitleaks, bloquant) | $SECRETS |"
+            echo "| Secrets en clair (gitleaks, bloquant dès le 2026-11-02) | $SECRETS |"
           } >> "$GITHUB_STEP_SUMMARY"
           for v in "$SECRETS" "$CVE" "$MODELES" "$LICENCES" "$SECURITE"; do
             if [ "$v" = "failure" ]; then
