@@ -126,6 +126,20 @@ jobs:
           if [ "$ignore_present" = true ]; then
             mv "$RUNNER_TEMP/gitleaksignore.depot" .gitleaksignore
           fi
+          # Exceptions par dépôt, datées : seule dérogation à D3. Une ligne par
+          # dépôt (« dépôt:date de fin AAAAMMJJ »), avec la décision en
+          # commentaire. Le dépôt n'est pas exempté du scan : un secret y
+          # produit un avertissement au lieu de bloquer, jusqu'à la date.
+          #   decor-st-Canevas : secrets de la cliente, encore utilisés par
+          #   elle (décision du DG du 2026-10-12, demande de F. Paradis).
+          exceptions="Baseline-quebec/decor-st-Canevas:20270412"
+          for e in $exceptions; do
+            if [ "${e%%:*}" = "$GITHUB_REPOSITORY" ] && [ "$statut" -ne 0 ] \
+              && [ "$(date -u +%Y%m%d)" -le "${e##*:}" ]; then
+              echo "::warning title=gitleaks::Secret en clair trouvé. Dépôt en exception jusqu'au ${e##*:} (décision du DG du 2026-10-12) : avertissement seulement."
+              exit 0
+            fi
+          done
           # Période d'avertissement (décision du DG, 2026-10-12, sur l'avis
           # d'Émile Turcotte) : jusqu'au 2026-11-01 inclus, un secret trouvé
           # avertit sans bloquer, le temps de faire tourner les secrets connus.
