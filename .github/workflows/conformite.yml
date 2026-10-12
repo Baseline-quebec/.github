@@ -83,7 +83,60 @@ jobs:
       # nomment donc leur version (`uv run --python`), et un test le garde. Ne
       # jamais supposer qu'une étape retrouve l'environnement d'origine.
       #
-      # Le seul contrôle BLOQUANT par défaut, et le plus court : il lit le
+      # Décision D3 du Directeur général, 2026-10-09 (audit GitHub, écart B3) :
+      # gitleaks sur l'arbre du dépôt, BLOQUANT quel que soit `mode` (après la
+      # période d'avertissement qui finit le 2026-11-01), sans
+      # liste d'exclusion ni fichier .gitleaksignore pris en compte. Il passe
+      # avant les autres étapes : licence-scan installe node_modules dans
+      # l'espace de travail, ce qui produirait des faux positifs ici.
+      #
+      # L'image est épinglée par empreinte (v8.30.1, index multi-plateforme) :
+      # l'action officielle gitleaks/gitleaks-action exige une licence pour une
+      # organisation. `--redact` est obligatoire : les journaux des dépôts
+      # publics sont publics, aucune valeur ne doit y apparaître.
+      - name: Chercher les secrets (gitleaks, bloquant)
+        id: secrets
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Configuration par défaut imposée par GITLEAKS_CONFIG_TOML : elle
+          # passe avant un .gitleaks.toml du dépôt, qui pourrait sinon y
+          # ajouter des exclusions. Commentaires gitleaks:allow et
+          # .gitleaksignore ignorés pour la même raison.
+          #
+          # `--gitleaks-ignore-path /dev/null` ne suffit PAS : gitleaks lit en
+          # plus le .gitleaksignore à la racine de la source. Vérifié le
+          # 2026-10-11 avec l'image épinglée : une empreinte
+          # « /src/<chemin>:<règle>:<ligne> » y fait taire le constat. Le
+          # fichier est donc retiré de l'espace de travail (le checkout jetable
+          # du runner, pas le dépôt), puis remis pour les étapes suivantes.
+          ignore_present=false
+          if [ -e .gitleaksignore ] || [ -L .gitleaksignore ]; then
+            ignore_present=true
+            echo "::warning title=gitleaks::.gitleaksignore du dépôt non pris en compte (décision D3 : aucune exclusion)."
+            mv .gitleaksignore "$RUNNER_TEMP/gitleaksignore.depot"
+          fi
+          statut=0
+          docker run --rm -v "$PWD":/src:ro \
+            -e GITLEAKS_CONFIG_TOML=$'[extend]\nuseDefault = true' \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            dir /src --redact --no-banner --ignore-gitleaks-allow \
+            --gitleaks-ignore-path /dev/null --exit-code 1 || statut=$?
+          if [ "$ignore_present" = true ]; then
+            mv "$RUNNER_TEMP/gitleaksignore.depot" .gitleaksignore
+          fi
+          # Période d'avertissement (décision du DG, 2026-10-12, sur l'avis
+          # d'Émile Turcotte) : jusqu'au 2026-11-01 inclus, un secret trouvé
+          # avertit sans bloquer, le temps de faire tourner les secrets connus.
+          # Bloquant à partir du 2026-11-02 (UTC), sans autre changement.
+          if [ "$statut" -ne 0 ] && [ "$(date -u +%Y%m%d)" -lt 20261102 ]; then
+            echo "::warning title=gitleaks::Secret en clair trouvé. Avertissement seulement jusqu'au 2026-11-01 : ce contrôle devient bloquant le 2026-11-02. Faites tourner le secret et retirez-le du code."
+            exit 0
+          fi
+          exit "$statut"
+
+      # Contrôle BLOQUANT par défaut, et le plus court : il lit le
       # source, n'installe rien et tourne en deux secondes. Bloquant parce que
       # c'est la condition posée par le Directeur général le 2026-10-10 pour
       # garder Sentry (NORM-TI-DEV-01, section 9) : une initialisation sans
@@ -140,12 +193,14 @@ jobs:
           MODELES: ${{ steps.modeles.outcome }}
           LICENCES: ${{ steps.licences.outcome }}
           SECURITE: ${{ steps.securite.outcome }}
+          SECRETS: ${{ steps.secrets.outcome }}
         run: |
           echo "Configuration Sentry            : $SENTRY"
           echo "CVE des dépendances verrouillées : $CVE"
           echo "Références aux modèles dépréciés : $MODELES"
           echo "Licences des dépendances        : $LICENCES"
           echo "Secrets, code et configuration  : $SECURITE"
+          echo "Secrets en clair (gitleaks)     : $SECRETS"
           {
             echo "| Contrôle | Verdict |"
             echo "|---|---|"
@@ -154,8 +209,9 @@ jobs:
             echo "| Références aux modèles dépréciés | $MODELES |"
             echo "| Licences des dépendances | $LICENCES |"
             echo "| Secrets, code et configuration | $SECURITE |"
+            echo "| Secrets en clair (gitleaks, bloquant dès le 2026-11-02) | $SECRETS |"
           } >> "$GITHUB_STEP_SUMMARY"
-          for v in "$SENTRY" "$CVE" "$MODELES" "$LICENCES" "$SECURITE"; do
+          for v in "$SENTRY" "$SECRETS" "$CVE" "$MODELES" "$LICENCES" "$SECURITE"; do
             if [ "$v" = "failure" ]; then
               echo "::error title=Conformité Baseline::Au moins un contrôle a échoué. Voir le récapitulatif ci-dessus."
               exit 1

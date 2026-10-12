@@ -17,6 +17,7 @@ d'un même job :
 
 | Étape | Action | Durée moyenne |
 |---|---|---|
+| Secrets en clair, avertissement jusqu'au 2026-11-01 puis bloquant | gitleaks (image épinglée par empreinte) | à mesurer |
 | Configuration Sentry | `actions/sentry-config` | 3 s |
 | CVE des dépendances verrouillées | `actions/cve-scan` | 28 s |
 | Références aux modèles dépréciés | `tracking-llm-discontinued` | 31 s |
