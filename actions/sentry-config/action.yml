@@ -1,0 +1,64 @@
+name: "Configuration Sentry"
+description: >
+  Fait échouer une pull request dont le code initialise Sentry sans le masquage
+  imposé par NORM-TI-DEV-01 : send_default_pii=False, include_local_variables=False
+  et un before_send en Python ; sendDefaultPii: false et un beforeSend en JS/TS.
+  La configuration de référence est dans le gabarit project-bootstrap-template,
+  observability/sentry/ et docs/sentry.md.
+
+inputs:
+  mode:
+    description: >
+      "bloquant" fait échouer le job sur une initialisation sans masquage.
+      "observation" produit le rapport sans jamais bloquer.
+    required: false
+    default: "observation"
+  chemin:
+    description: "Sous-répertoire à analyser, relatif à la racine du dépôt."
+    required: false
+    default: "."
+  depot:
+    description: >
+      Nom du dépôt analysé, tel qu'il apparaît dans le rapport et tel que les
+      exemptions de politique.yaml le visent (« <dépôt>:<chemin> »).
+    required: false
+    default: ${{ github.repository }}
+
+outputs:
+  bloquants:
+    description: "Nombre d'initialisations de Sentry sans le masquage imposé."
+    value: ${{ steps.verifier.outputs.bloquants }}
+
+runs:
+  using: "composite"
+  steps:
+    # Même raison que dans cve-scan et secaudit-code : cette action n'installe
+    # que pyyaml, rien du depot scanne, donc une cle de cache derivee de ses
+    # verrous ne toucherait jamais et paierait un parcours `**` du depot,
+    # node_modules compris (voir actions/commun/test_cache_uv.py).
+    - name: Installer uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: ""
+
+    # Aucune installation des dependances du depot : le verificateur lit le
+    # source. Il tourne donc aussi sur un depot dont l'installation est cassee.
+    - name: Vérifier les initialisations de Sentry
+      id: verifier
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        SOURCE: ${{ inputs.chemin }}
+        DEPOT: ${{ inputs.depot }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        options=(--racine "$SOURCE" --politique "$ACTION_PATH/politique.yaml")
+        if [ "$MODE" != "bloquant" ]; then
+          options+=(--sans-blocage)
+        fi
+        if [ -n "$DEPOT" ]; then
+          options+=(--depot "$DEPOT")
+        fi
+        uv run --no-project --python 3.12 --with pyyaml python "$ACTION_PATH/verifier.py" "${options[@]}"

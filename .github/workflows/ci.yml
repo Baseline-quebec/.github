@@ -85,6 +85,19 @@ jobs:
         with:
           mode: observation
 
+  # Le controle Sentry, par son chemin local et en mode BLOQUANT : ce depot
+  # n'initialise pas Sentry, donc un rouge ici est un verificateur qui lit mal.
+  sentry-local:
+    name: Configuration Sentry (chemin local)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: ./actions/sentry-config
+        with:
+          mode: bloquant
+
   # Vérifie que les politiques restent chargeables et que les motifs compilent.
   # Une regex invalide dans un politique.yaml casserait le scan de tous les
   # dépôts de l'organisation d'un coup.
@@ -117,7 +130,7 @@ jobs:
           from pathlib import Path
           sys.path.insert(0, 'actions/commun')
           from politique import Politique
-          for chemin in ('actions/secaudit-code/politique.yaml', 'actions/cve-scan/politique.yaml'):
+          for chemin in ('actions/secaudit-code/politique.yaml', 'actions/cve-scan/politique.yaml', 'actions/sentry-config/politique.yaml'):
               p = Politique.charger(Path(chemin))
               assert p.bloquantes, f'{chemin} ne bloque plus rien'
               echues = [e for e in p.exemptions if e.expire is None]

@@ -1,4 +1,4 @@
-# Workflow central de conformité : les quatre scans en un seul job.
+# Workflow central de conformité : les cinq contrôles en un seul job.
 #
 # Il n'est PAS destiné à être copié dans les dépôts. Il est imposé par un
 # ruleset au niveau de l'organisation (règle « Require workflows to pass before
@@ -82,6 +82,7 @@ jobs:
       # sur une `SyntaxError` en exécutant du code écrit pour 3.12. Les actions
       # nomment donc leur version (`uv run --python`), et un test le garde. Ne
       # jamais supposer qu'une étape retrouve l'environnement d'origine.
+      #
       # Décision D3 du Directeur général, 2026-10-09 (audit GitHub, écart B3) :
       # gitleaks sur l'arbre du dépôt, BLOQUANT quel que soit `mode` (après la
       # période d'avertissement qui finit le 2026-11-01), sans
@@ -135,6 +136,20 @@ jobs:
           fi
           exit "$statut"
 
+      # Contrôle BLOQUANT par défaut, et le plus court : il lit le
+      # source, n'installe rien et tourne en deux secondes. Bloquant parce que
+      # c'est la condition posée par le Directeur général le 2026-10-10 pour
+      # garder Sentry (NORM-TI-DEV-01, section 9) : une initialisation sans
+      # masquage envoie aux États-Unis les variables locales, l'IP et les
+      # en-têtes de chaque erreur, et il n'y a rien à « mesurer d'abord ». Le
+      # `workflow_dispatch` peut encore le passer en observation.
+      - name: Vérifier la configuration Sentry
+        id: sentry
+        if: always()
+        uses: Baseline-quebec/.github/actions/sentry-config@v2
+        with:
+          mode: ${{ inputs.mode || 'bloquant' }}
+
       - name: Analyser les dépendances
         id: cve
         if: always()
@@ -173,12 +188,14 @@ jobs:
         if: always()
         shell: bash
         env:
+          SENTRY: ${{ steps.sentry.outcome }}
           CVE: ${{ steps.cve.outcome }}
           MODELES: ${{ steps.modeles.outcome }}
           LICENCES: ${{ steps.licences.outcome }}
           SECURITE: ${{ steps.securite.outcome }}
           SECRETS: ${{ steps.secrets.outcome }}
         run: |
+          echo "Configuration Sentry            : $SENTRY"
           echo "CVE des dépendances verrouillées : $CVE"
           echo "Références aux modèles dépréciés : $MODELES"
           echo "Licences des dépendances        : $LICENCES"
@@ -187,13 +204,14 @@ jobs:
           {
             echo "| Contrôle | Verdict |"
             echo "|---|---|"
+            echo "| Configuration Sentry | $SENTRY |"
             echo "| CVE des dépendances verrouillées | $CVE |"
             echo "| Références aux modèles dépréciés | $MODELES |"
             echo "| Licences des dépendances | $LICENCES |"
             echo "| Secrets, code et configuration | $SECURITE |"
             echo "| Secrets en clair (gitleaks, bloquant dès le 2026-11-02) | $SECRETS |"
           } >> "$GITHUB_STEP_SUMMARY"
-          for v in "$SECRETS" "$CVE" "$MODELES" "$LICENCES" "$SECURITE"; do
+          for v in "$SENTRY" "$SECRETS" "$CVE" "$MODELES" "$LICENCES" "$SECURITE"; do
             if [ "$v" = "failure" ]; then
               echo "::error title=Conformité Baseline::Au moins un contrôle a échoué. Voir le récapitulatif ci-dessus."
               exit 1
