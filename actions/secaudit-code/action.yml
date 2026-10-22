@@ -19,8 +19,11 @@ inputs:
     default: "."
   base-semgrep:
     description: >
-      Commit de base d'une pull request. Fourni, semgrep ne rapporte que les
-      constats introduits depuis cette base (`--baseline-commit`). Vide,
+      Base de l'analyse incrémentale de semgrep : `fusion` pour le premier
+      parent du commit de fusion de test d'une pull request (recommandé), ou le
+      SHA d'un ancêtre de HEAD. Fournie, semgrep ne rapporte que les constats
+      introduits depuis cette base (`--baseline-commit`) ; si elle est
+      introuvable, l'analyse est complète. Vide,
       l'analyse est complète : c'est le cas en merge_group et sur push, où le
       résultat de fusion doit être audité en entier.
     required: false

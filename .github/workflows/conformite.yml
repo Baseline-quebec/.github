@@ -195,8 +195,10 @@ jobs:
 
       # Deux raccourcis, décidés par le Directeur général le 2026-10-22 sur le
       # profil de cogniflo (étape à 203-279 s) :
-      # - semgrep incrémental sur pull_request seulement, depuis la base de la
-      #   pull request. merge_group et push gardent l'analyse complète : c'est
+      # - semgrep incrémental sur pull_request seulement, depuis la branche
+      #   cible telle que la fusion de test l'a prise (`fusion`, premier parent
+      #   du commit extrait ; `pull_request.base.sha` peut être périmé).
+      #   merge_group et push gardent l'analyse complète : c'est
       #   le résultat de fusion qui est audité en entier avant d'arriver sur la
       #   branche.
       # - gitleaks n'est pas relancé : l'étape « Chercher les secrets » ci-dessus
@@ -207,7 +209,7 @@ jobs:
         uses: Baseline-quebec/.github/actions/secaudit-code@v2
         with:
           mode: ${{ inputs.mode || 'observation' }}
-          base-semgrep: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          base-semgrep: ${{ github.event_name == 'pull_request' && 'fusion' || '' }}
           rapport-gitleaks: ${{ runner.temp }}/gitleaks/gitleaks.json
 
       # Sans ce recapitulatif, `if: always()` masquerait un echec : le job

@@ -193,6 +193,44 @@ def test_une_base_qui_n_est_pas_un_ancetre_est_refusee(depot, tmp_path: Path) ->
     assert "::notice title=semgrep::" in resultat.stdout
 
 
+@pytest.fixture
+def fusion(depot) -> tuple[Path, str]:
+    """HEAD est un commit de fusion, comme le checkout d'une pull request.
+
+    Rend la racine et le premier parent, c'est-à-dire la branche cible.
+    """
+    racine, base = depot
+    git(racine, "checkout", "--quiet", "-b", "pr", base)
+    (racine / "pr.py").write_text("print('pr')\n", encoding="utf-8")
+    git(racine, "add", ".")
+    git(racine, "commit", "--quiet", "-m", "pr")
+    git(racine, "checkout", "--quiet", "-")
+    cible = git(racine, "rev-parse", "HEAD")
+    git(racine, "merge", "--quiet", "--no-ff", "-m", "fusion de test", "pr")
+    return racine, cible
+
+
+def test_fusion_prend_le_premier_parent_du_commit_de_fusion(fusion, tmp_path: Path) -> None:
+    """La branche cible a pu avancer depuis la base de l'événement : on prend celle de la fusion."""
+    racine, cible = fusion
+    resultat, appels, _ = lancer(racine, tmp_path, BASE_SEMGREP="fusion")
+    assert resultat.returncode == 0, resultat.stderr
+    (semgrep,) = appels_de(appels, "semgrep")
+    assert f"--baseline-commit {cible}" in semgrep["args"]
+    assert Path(semgrep["cwd"]) != racine
+
+
+def test_fusion_sur_un_commit_ordinaire_retombe_sur_l_analyse_complete(
+    depot, tmp_path: Path
+) -> None:
+    """Sans commit de fusion, le premier parent ne serait que le commit précédent."""
+    racine, _ = depot
+    resultat, appels, _ = lancer(racine, tmp_path, BASE_SEMGREP="fusion")
+    (semgrep,) = appels_de(appels, "semgrep")
+    assert "--baseline-commit" not in semgrep["args"]
+    assert "::notice title=semgrep::" in resultat.stdout
+
+
 def test_checkov_ne_tourne_que_sur_de_l_infrastructure(depot, tmp_path: Path) -> None:
     racine, _ = depot
     _, appels, rapports = lancer(racine, tmp_path, IAC="non")

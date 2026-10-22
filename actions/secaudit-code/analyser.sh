@@ -23,7 +23,9 @@
 #   RAPPORTS      dossier des rapports JSON et de _outils.log (obligatoire)
 #   SOURCE        sous-repertoire a analyser, relatif a la racine (defaut .)
 #   IAC           oui pour lancer checkov
-#   BASE_SEMGREP  commit de base de la pull request, vide pour l'analyse complete
+#   BASE_SEMGREP  `fusion` (premier parent du commit de fusion de test d'une
+#                 pull request) ou SHA d'un ancetre de HEAD ; vide pour
+#                 l'analyse complete
 #
 # Le script s'execute depuis la racine du depot (le checkout).
 
@@ -49,18 +51,39 @@ semgrep_complet() {
   (cd "$racine/$SOURCE" && semgrep_lancer)
 }
 
-# Rend la base disponible localement et verifie qu'elle est un ancetre de HEAD.
-# Le checkout est superficiel (une seule revision) : semgrep calcule une base de
-# fusion, ce qui exige l'historique entre la base et HEAD. Sur une pull request,
-# HEAD est le commit de fusion de test, dont la base est le premier parent :
-# deux revisions suffisent.
-base_disponible() {
-  local base="$1"
-  if ! git -C "$racine" merge-base --is-ancestor "$base" HEAD 2>/dev/null; then
-    git -C "$racine" fetch --no-tags --quiet --depth=2 origin "$(git -C "$racine" rev-parse HEAD)" \
-      || return 1
+# Rend les parents de HEAD disponibles : le checkout est superficiel (une seule
+# revision), et semgrep calcule une base de fusion, ce qui exige l'historique
+# entre la base et HEAD. Deux revisions suffisent quand la base est un parent.
+approfondir() {
+  git -C "$racine" fetch --no-tags --quiet --depth=2 origin "$(git -C "$racine" rev-parse HEAD)"
+}
+
+# Ecrit sur la sortie le SHA de la base a utiliser, ou echoue.
+#
+# `fusion` designe le premier parent du commit de fusion de test qu'une pull
+# request extrait : exactement la branche cible au moment de l'analyse. C'est la
+# valeur a preferer. `pull_request.base.sha` est fige a l'ouverture ou a la
+# derniere synchronisation, et la branche cible a souvent avance depuis : mesure
+# sur cogniflo le 2026-10-22, la base de l'evenement n'etait plus dans les deux
+# revisions extraites, et l'analyse retombait sur le scan complet. Un HEAD qui
+# n'est pas un commit de fusion est refuse : son premier parent ne serait que
+# le commit precedent, et l'incremental ignorerait tout le reste de la branche.
+#
+# Un SHA explicite est accepte s'il est un ancetre de HEAD.
+resoudre_base() {
+  local demande="$1"
+  if [ "$demande" = fusion ]; then
+    git -C "$racine" rev-parse --verify --quiet "HEAD^2^{commit}" >/dev/null 2>&1 \
+      || approfondir || return 1
+    git -C "$racine" rev-parse --verify --quiet "HEAD^2^{commit}" >/dev/null || return 1
+    git -C "$racine" rev-parse --verify --quiet "HEAD^1^{commit}"
+    return
   fi
-  git -C "$racine" merge-base --is-ancestor "$base" HEAD 2>/dev/null
+  if ! git -C "$racine" merge-base --is-ancestor "$demande" HEAD 2>/dev/null; then
+    approfondir || return 1
+  fi
+  git -C "$racine" merge-base --is-ancestor "$demande" HEAD 2>/dev/null || return 1
+  echo "$demande"
 }
 
 # semgrep fait un `git reset --hard` vers la base quand l'arbre de travail est
@@ -83,8 +106,8 @@ semgrep_incremental() {
 # une base est fournie ET disponible.
 semgrep_analyser() {
   if [ "$INCREMENTAL" = oui ]; then
-    if semgrep_incremental "$BASE_SEMGREP"; then
-      echo "semgrep : analyse incrementale depuis $BASE_SEMGREP"
+    if semgrep_incremental "$BASE_RESOLUE"; then
+      echo "semgrep : analyse incrementale depuis $BASE_RESOLUE ($BASE_SEMGREP)"
       return 0
     fi
     rm -f "$RAPPORTS/semgrep.json"
@@ -125,7 +148,8 @@ chronometrer() {
 }
 
 INCREMENTAL=non
-if [ -n "$BASE_SEMGREP" ] && base_disponible "$BASE_SEMGREP"; then
+BASE_RESOLUE=""
+if [ -n "$BASE_SEMGREP" ] && BASE_RESOLUE="$(resoudre_base "$BASE_SEMGREP")"; then
   INCREMENTAL=oui
 fi
 

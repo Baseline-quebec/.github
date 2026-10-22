@@ -75,7 +75,8 @@ propre.
 
 **Durée sur pull request.** trivy et checkov tournent en parallèle
 (`actions/secaudit-code/analyser.sh`, testé). Sur `pull_request`, semgrep est
-incrémental (`--baseline-commit` sur la base de la pull request) : il ne
+incrémental (`--baseline-commit` sur la branche cible prise par la fusion de
+test) : il ne
 rapporte que les constats introduits par la pull request, et tourne avec les
 deux autres. En `merge_group` et sur push, l'analyse reste complète, donc le
 résultat de fusion est audité en entier avant d'arriver sur la branche ; elle
