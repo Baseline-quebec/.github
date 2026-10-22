@@ -117,12 +117,17 @@ jobs:
             echo "::warning title=gitleaks::.gitleaksignore du dépôt non pris en compte (décision D3 : aucune exclusion)."
             mv .gitleaksignore "$RUNNER_TEMP/gitleaksignore.depot"
           fi
+          # Le rapport JSON est repris par l'audit du code (rapport-gitleaks),
+          # qui ne relance plus gitleaks : ce scan-ci, sans exclusion, couvre
+          # tout ce que le second voyait.
+          mkdir -p "$RUNNER_TEMP/gitleaks"
           statut=0
-          docker run --rm -v "$PWD":/src:ro \
+          docker run --rm -v "$PWD":/src:ro -v "$RUNNER_TEMP/gitleaks":/out \
             -e GITLEAKS_CONFIG_TOML=$'[extend]\nuseDefault = true' \
             ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
             dir /src --redact --no-banner --ignore-gitleaks-allow \
-            --gitleaks-ignore-path /dev/null --exit-code 1 || statut=$?
+            --gitleaks-ignore-path /dev/null --exit-code 1 \
+            --report-format json --report-path /out/gitleaks.json || statut=$?
           if [ "$ignore_present" = true ]; then
             mv "$RUNNER_TEMP/gitleaksignore.depot" .gitleaksignore
           fi
@@ -188,12 +193,24 @@ jobs:
         with:
           mode: ${{ inputs.mode || 'observation' }}
 
+      # Deux raccourcis, décidés par le Directeur général le 2026-10-22 sur le
+      # profil de cogniflo (étape à 203-279 s) :
+      # - semgrep incrémental sur pull_request seulement, depuis la branche
+      #   cible telle que la fusion de test l'a prise (`fusion`, premier parent
+      #   du commit extrait ; `pull_request.base.sha` peut être périmé).
+      #   merge_group et push gardent l'analyse complète : c'est
+      #   le résultat de fusion qui est audité en entier avant d'arriver sur la
+      #   branche.
+      # - gitleaks n'est pas relancé : l'étape « Chercher les secrets » ci-dessus
+      #   lui passe son rapport.
       - name: Auditer le code
         id: securite
         if: always()
         uses: Baseline-quebec/.github/actions/secaudit-code@v2
         with:
           mode: ${{ inputs.mode || 'observation' }}
+          base-semgrep: ${{ github.event_name == 'pull_request' && 'fusion' || '' }}
+          rapport-gitleaks: ${{ runner.temp }}/gitleaks/gitleaks.json
 
       # Sans ce recapitulatif, `if: always()` masquerait un echec : le job
       # prendrait la couleur de sa DERNIERE etape. Chaque scan est donc rappele

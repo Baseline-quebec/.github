@@ -17,6 +17,27 @@ inputs:
     description: "Sous-répertoire à analyser, relatif à la racine du dépôt."
     required: false
     default: "."
+  base-semgrep:
+    description: >
+      Base de l'analyse incrémentale de semgrep : `fusion` pour le premier
+      parent du commit de fusion de test d'une pull request (recommandé), ou le
+      SHA d'un ancêtre de HEAD. Fournie, semgrep ne rapporte que les constats
+      introduits depuis cette base (`--baseline-commit`) ; si elle est
+      introuvable, l'analyse est complète. Vide,
+      l'analyse est complète : c'est le cas en merge_group et sur push, où le
+      résultat de fusion doit être audité en entier.
+    required: false
+    default: ""
+  rapport-gitleaks:
+    description: >
+      Rapport JSON de gitleaks déjà produit par l'appelant sur le même arbre.
+      Fourni, gitleaks n'est pas relancé : le workflow de conformité le fait
+      tourner juste avant, sans exclusion, et le relancer ici doublait le
+      coût (27 s sur cogniflo) pour un résultat inclus dans le premier. Un
+      fichier absent rend gitleaks muet dans le rapport, jamais propre. Vide,
+      l'action lance gitleaks elle-même.
+    required: false
+    default: ""
   rapport-json:
     description: >
       Chemin où écrire les constats en JSON. Utilisé par le balayage mensuel de
@@ -99,23 +120,39 @@ runs:
       env:
         RAPPORTS: ${{ steps.espace.outputs.dossier }}
         SOURCE: ${{ inputs.chemin }}
+        RAPPORT_GITLEAKS: ${{ inputs.rapport-gitleaks }}
       run: |
         set -uo pipefail
+        if [ -n "$RAPPORT_GITLEAKS" ]; then
+          # Reprise du rapport de l'appelant. S'il manque, aucune copie : le
+          # rapport final dira gitleaks muet au lieu de le compter propre.
+          if [ -s "$RAPPORT_GITLEAKS" ]; then
+            cp "$RAPPORT_GITLEAKS" "$RAPPORTS/gitleaks.json"
+          else
+            echo "::warning title=gitleaks::Rapport de l'appelant introuvable ($RAPPORT_GITLEAKS) : gitleaks sera signalé muet."
+          fi
+          exit 0
+        fi
         docker run --rm \
           -v "$PWD/$SOURCE":/src:ro -v "$RAPPORTS":/out \
           ghcr.io/gitleaks/gitleaks:v8.30.1 \
           dir /src --report-format json --report-path /out/gitleaks.json --exit-code 0 \
           >>"$RAPPORTS/_outils.log" 2>&1 || true
 
-    - name: Analyser le code (semgrep)
+    # trivy et checkov tournent en parallèle, rejoints par semgrep quand il est
+    # incrémental (base fournie) ; l'analyse complète de semgrep passe seule
+    # d'abord, plus courte ainsi sur un runner à 2 vCPU. Voir analyser.sh, qui
+    # porte la logique pour qu'elle soit testable. Il ne fait jamais échouer
+    # l'étape.
+    - name: Analyser le code et la configuration (semgrep, trivy, checkov)
       shell: bash
-      working-directory: ${{ inputs.chemin }}
       env:
         RAPPORTS: ${{ steps.espace.outputs.dossier }}
-      run: |
-        set -uo pipefail
-        uv run --no-project --with semgrep==1.175.0 semgrep scan \
-          --config auto --json --output "$RAPPORTS/semgrep.json" --quiet . 2>>"$RAPPORTS/_outils.log" || true
+        SOURCE: ${{ inputs.chemin }}
+        IAC: ${{ steps.detection.outputs.iac }}
+        BASE_SEMGREP: ${{ inputs.base-semgrep }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "$ACTION_PATH/analyser.sh"
 
     - name: Analyser le code Python (bandit)
       if: steps.detection.outputs.python == 'oui'
@@ -129,36 +166,6 @@ runs:
           --recursive . \
           --exclude ./.venv,./venv,./node_modules,./build,./dist \
           --format json --output "$RAPPORTS/bandit.json" 2>>"$RAPPORTS/_outils.log" || true
-
-    # --scanners misconfig,secret : les vulnérabilités de dépendances sont la
-    # charge de cve-scan, qui lit les fichiers de verrouillage. Les compter aux
-    # deux endroits ferait apparaître la même CVE dans deux rapports, avec deux
-    # verdicts possibles selon l'outil qui l'a vue.
-    - name: Analyser la configuration (trivy)
-      shell: bash
-      env:
-        RAPPORTS: ${{ steps.espace.outputs.dossier }}
-        SOURCE: ${{ inputs.chemin }}
-      run: |
-        set -uo pipefail
-        docker run --rm \
-          -v "$PWD/$SOURCE":/src:ro -v "$RAPPORTS":/out \
-          aquasec/trivy:0.74.0 filesystem \
-          --scanners misconfig,secret --format json --output /out/trivy.json \
-          --exit-code 0 --no-progress /src \
-          >>"$RAPPORTS/_outils.log" 2>&1 || true
-
-    - name: Analyser l'infrastructure (checkov)
-      if: steps.detection.outputs.iac == 'oui'
-      shell: bash
-      working-directory: ${{ inputs.chemin }}
-      env:
-        RAPPORTS: ${{ steps.espace.outputs.dossier }}
-      run: |
-        set -uo pipefail
-        uv run --no-project --with checkov==3.3.16 checkov \
-          --directory . --output json --quiet --compact \
-          > "$RAPPORTS/checkov.json" 2>>"$RAPPORTS/_outils.log" || true
 
     - name: Analyser les Dockerfiles (hadolint)
       if: steps.detection.outputs.docker == 'oui'
