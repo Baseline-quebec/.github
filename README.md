@@ -73,6 +73,19 @@ cinq autres. Son silence est signalé comme tel dans le rapport, jamais compté
 comme une absence de constat ; un scanner cassé ressemble exactement à un dépôt
 propre.
 
+**Durée sur pull request.** semgrep, trivy et checkov tournent en parallèle
+(`actions/secaudit-code/analyser.sh`, testé). Sur `pull_request`, semgrep est
+incrémental (`--baseline-commit` sur la base de la pull request) : il ne
+rapporte que les constats introduits par la pull request. En `merge_group` et
+sur push, l'analyse reste complète, donc le résultat de fusion est audité en
+entier avant d'arriver sur la branche. Si l'incrémental est impossible (base
+introuvable, erreur de semgrep), l'analyse complète prend le relais, jamais un
+scan sauté. Dans le workflow de conformité, gitleaks ne tourne qu'une fois :
+l'étape « Chercher les secrets », sans exclusion, passe son rapport à l'audit
+(`rapport-gitleaks`). Appelée sans cette entrée, l'action lance gitleaks
+elle-même. Profil de cogniflo du 2026-10-22 avant ces changements : semgrep
+144 s, checkov 52 s, gitleaks en double 27 s, trivy 12 s, l'un après l'autre.
+
 Trois outils seulement peuvent légitimement ne pas tourner : bandit, checkov et
 hadolint, que la détection saute faute de Python, d'infrastructure ou de
 Dockerfile. La liste est **fermée** et l'action échoue si elle en nomme un
