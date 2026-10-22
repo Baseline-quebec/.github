@@ -136,10 +136,12 @@ runs:
           dir /src --report-format json --report-path /out/gitleaks.json --exit-code 0 \
           >>"$RAPPORTS/_outils.log" 2>&1 || true
 
-    # semgrep, trivy et checkov tournent en parallèle, semgrep en incrémental
-    # quand une base est fournie : voir analyser.sh, qui porte la logique pour
-    # qu'elle soit testable. Le script ne fait jamais échouer l'étape.
-    - name: Analyser le code et la configuration (semgrep, trivy, checkov en parallèle)
+    # trivy et checkov tournent en parallèle, rejoints par semgrep quand il est
+    # incrémental (base fournie) ; l'analyse complète de semgrep passe seule
+    # d'abord, plus courte ainsi sur un runner à 2 vCPU. Voir analyser.sh, qui
+    # porte la logique pour qu'elle soit testable. Il ne fait jamais échouer
+    # l'étape.
+    - name: Analyser le code et la configuration (semgrep, trivy, checkov)
       shell: bash
       env:
         RAPPORTS: ${{ steps.espace.outputs.dossier }}

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# Lance semgrep, trivy et checkov EN PARALLELE, puis attend les trois.
+# Lance semgrep, trivy et checkov, en parallele quand c'est plus court.
 #
 # Pourquoi : profil de « Auditer le code » sur cogniflo, 2026-10-22, quatre
 # executions : semgrep 144 s, checkov 52 s, trivy 12 s, l'un apres l'autre.
-# Aucun ne depend d'un autre, chacun ecrit son propre rapport : les faire
-# tourner ensemble ramene l'etape a la duree du plus long.
+# Aucun ne depend d'un autre, chacun ecrit son propre rapport : trivy et checkov
+# tournent toujours ensemble, et semgrep les rejoint quand il est incremental.
+# L'analyse complete de semgrep, elle, passe seule d'abord (mesure plus bas).
 #
 # semgrep est INCREMENTAL quand BASE_SEMGREP est fourni (pull request) : il ne
 # rapporte que les constats introduits depuis cette base (`--baseline-commit`).
@@ -78,14 +79,18 @@ semgrep_incremental() {
   return "$statut"
 }
 
+# INCREMENTAL est decide avant le lancement (voir plus bas) : oui seulement si
+# une base est fournie ET disponible.
 semgrep_analyser() {
-  if [ -n "$BASE_SEMGREP" ]; then
-    if base_disponible "$BASE_SEMGREP" && semgrep_incremental "$BASE_SEMGREP"; then
+  if [ "$INCREMENTAL" = oui ]; then
+    if semgrep_incremental "$BASE_SEMGREP"; then
       echo "semgrep : analyse incrementale depuis $BASE_SEMGREP"
       return 0
     fi
-    echo "::notice title=semgrep::Analyse incrementale impossible depuis $BASE_SEMGREP, analyse complete."
     rm -f "$RAPPORTS/semgrep.json"
+  fi
+  if [ -n "$BASE_SEMGREP" ]; then
+    echo "::notice title=semgrep::Analyse incrementale impossible depuis $BASE_SEMGREP, analyse complete."
   fi
   echo "semgrep : analyse complete"
   semgrep_complet
@@ -119,9 +124,24 @@ chronometrer() {
   return "$statut"
 }
 
+INCREMENTAL=non
+if [ -n "$BASE_SEMGREP" ] && base_disponible "$BASE_SEMGREP"; then
+  INCREMENTAL=oui
+fi
+
+# L'analyse COMPLETE de semgrep tourne seule, avant les deux autres. Mesure sur
+# cogniflo le 2026-10-22, runner a 2 vCPU : seule, 116 s ; en parallele avec
+# checkov et trivy, 226 s et 236 s sur deux executions, soit une etape plus
+# longue qu'en sequence (238 s contre 203 s). semgrep occupe deja tous les
+# coeurs, et le partage le ralentit plus qu'il ne fait gagner aux autres.
+# L'incremental, lui, est court (23 s) : il tourne avec les deux autres.
 declare -A pids=()
-chronometrer semgrep semgrep_analyser >"$journaux/semgrep.log" 2>&1 &
-pids[semgrep]=$!
+if [ "$INCREMENTAL" = oui ]; then
+  chronometrer semgrep semgrep_analyser >"$journaux/semgrep.log" 2>&1 &
+  pids[semgrep]=$!
+else
+  chronometrer semgrep semgrep_analyser >"$journaux/semgrep.log" 2>&1
+fi
 chronometrer trivy trivy_analyser >"$journaux/trivy.log" 2>&1 &
 pids[trivy]=$!
 if [ "$IAC" = oui ]; then
@@ -134,8 +154,8 @@ fi
 # Les journaux sont recopies dans un ordre fixe, un outil apres l'autre : ecrits
 # en parallele dans le meme fichier, ils s'entrelaceraient ligne a ligne.
 for outil in semgrep trivy checkov; do
-  [ -n "${pids[$outil]:-}" ] || continue
-  wait "${pids[$outil]}"
+  [ -f "$journaux/$outil.log" ] || continue
+  [ -z "${pids[$outil]:-}" ] || wait "${pids[$outil]}"
   {
     echo "===== $outil ====="
     cat "$journaux/$outil.log"

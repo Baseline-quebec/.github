@@ -213,14 +213,31 @@ def test_les_trois_outils_ecrivent_leur_rapport(depot, tmp_path: Path) -> None:
         assert f"{outil} : " in resultat.stdout, "la durée de chaque outil doit être visible"
 
 
-def test_les_trois_outils_tournent_en_meme_temps(depot, tmp_path: Path) -> None:
+def test_en_incremental_les_trois_outils_tournent_en_meme_temps(depot, tmp_path: Path) -> None:
     """Chaque outil démarre avant que les autres aient fini : c'est tout le gain."""
-    racine, _ = depot
-    _, appels, _ = lancer(racine, tmp_path, IAC="oui", DELAI="1")
+    racine, base = depot
+    _, appels, _ = lancer(racine, tmp_path, IAC="oui", DELAI="1", BASE_SEMGREP=base)
     assert len(appels) == 3
     dernier_debut = max(float(a["debut"]) for a in appels)
     premiere_fin = min(float(a["fin"]) for a in appels)
     assert dernier_debut < premiere_fin
+
+
+def test_l_analyse_complete_de_semgrep_tourne_seule(depot, tmp_path: Path) -> None:
+    """Sur un runner à 2 vCPU, semgrep complet en parallèle passait de 116 s à 230 s.
+
+    trivy et checkov ne démarrent qu'une fois semgrep terminé, puis tournent
+    ensemble.
+    """
+    racine, _ = depot
+    _, appels, _ = lancer(racine, tmp_path, IAC="oui", DELAI="1", BASE_SEMGREP="")
+    (semgrep,) = appels_de(appels, "semgrep")
+    (trivy,) = appels_de(appels, "trivy")
+    (checkov,) = appels_de(appels, "checkov")
+    assert float(semgrep["fin"]) <= min(float(trivy["debut"]), float(checkov["debut"]))
+    assert max(float(trivy["debut"]), float(checkov["debut"])) < min(
+        float(trivy["fin"]), float(checkov["fin"])
+    )
 
 
 def test_un_outil_en_echec_n_emporte_pas_l_etape(depot, tmp_path: Path) -> None:
