@@ -4,13 +4,11 @@
 # il impose. Sourcé par creer-ruleset.sh, maj-ruleset.sh et activer-ruleset.sh.
 #
 # Un seul ruleset, « Conformité Baseline » : il impose conformite.yml (les
-# controles complets, gitleaks sur l'arbre compris) sur la branche par defaut
-# SEULEMENT. Decision du DG (2026-11-05) : controles complets seulement avant la
-# branche par defaut. Ajustee le meme jour par le responsable DevOps : les
-# secrets sont arretes au pre-commit de chaque depot, sans check d'organisation
-# vers develop (une pull request vers une autre branche n'en a aucun). La
-# promotion vers la branche par defaut est le dernier filet avant la production.
-# Trace : INTERNE67-2430.
+# controles complets, gitleaks sur l'arbre compris) sur la branche par defaut ET
+# sur `develop`. Historique : le 2026-11-05, essai de restriction a la branche par
+# defaut, annule le meme jour pour ne pas impacter les autres depots. Trace :
+# INTERNE67-2430. Un depot qui gere sa propre conformite (cogniflo) est EXCLU du
+# ruleset et appelle conformite.yml lui-meme (voir le README).
 #
 # La definition vit ici et nulle part ailleurs. Deux copies, une pour la
 # creation et une pour la mise a jour, finiraient par diverger : le ruleset
@@ -43,12 +41,24 @@ NOM_RULESET="Conformité Baseline"
 # de tracking-llm-discontinued continue de couvrir ces deux depots et d'y
 # ouvrir des issues : les en sortir demande de les nommer aussi dans le
 # --exclude de son workflow org-sweep.yml. C'est delibere ici.
+#
+# baseline-automation et baseline-tresorier : exclus du ruleset reel, declares
+# ici pour que le script decrive le vrai perimetre.
+#
+# cogniflo : gere sa propre conformite (workflows du depot et ruleset de depot).
+# Tant qu'il n'est pas exclu du ruleset reel, maj-ruleset.sh signale une derive
+# d'exclusion : c'est voulu. L'exclusion s'applique, le moment venu, avec
+# `AVEC_CONDITIONS=1 AVEC_EXCLUSIONS=1 ./scripts/maj-ruleset.sh` (essai a blanc
+# avec DRY_RUN=1 d'abord).
 EXCLUS=(
   "tracking-llm-discontinued"
   "Marketing"
   "Ventes"
   "bswh-baylee"
   "serko-northsky"
+  "baseline-automation"
+  "baseline-tresorier"
+  "cogniflo"
 )
 
 # Workflow impose, par chemin dans ce depot-ci.
@@ -62,14 +72,14 @@ WORKFLOWS=(
   ".github/workflows/conformite.yml"
 )
 
-# Branches ciblees : `~DEFAULT_BRANCH` SEULEMENT, la promotion vers la production.
-# Le ruleset visait aussi `refs/heads/develop` ; ce n'est plus le cas (decision
-# du 2026-11-05). Ne JAMAIS viser `~ALL` ni une branche de travail : la doc GitHub
-# de la regle « Require workflows to pass before merging » dit qu'elle BLOQUE les
-# pushs directs et ne doit viser que des branches dont tous les changements
-# passent par pull request.
+# Branches ciblees : la branche par defaut (la promotion vers la production) et
+# `develop` (la branche d'integration, alimentee par pull request). Ne JAMAIS
+# viser `~ALL` ni une branche de travail : la doc GitHub de la regle « Require
+# workflows to pass before merging » dit qu'elle BLOQUE les pushs directs et ne
+# doit viser que des branches dont tous les changements passent par pull request.
 BRANCHES=(
   "~DEFAULT_BRANCH"
+  "refs/heads/develop"
 )
 
 # Emet le tableau JSON `rules`. `do_not_enforce_on_create: true` (parametre de la
