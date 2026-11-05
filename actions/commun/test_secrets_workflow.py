@@ -314,6 +314,9 @@ def test_le_gitleaksignore_de_la_pr_n_est_jamais_copie(tmp_path: Path) -> None:
     resultat, appels, _ = lancer_gitleaks(depot, tmp_path)
     assert resultat.returncode == 0, resultat.stderr
     assert appels[0].fichiers == ["b.txt"]
+    assert len(appels) == 2
+    # Pas de repli : le fichier mis de côté ne doit pas faire échouer la copie.
+    assert "impossible à établir" not in resultat.stdout
     # Retiré pour le scan puis remis dans l'espace de travail.
     assert (depot / ".gitleaksignore").exists()
 
