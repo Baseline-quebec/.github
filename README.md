@@ -11,9 +11,11 @@ Le périmètre est « tous les dépôts sauf `tracking-llm-discontinued`,
 `Marketing` et `Ventes` », déclaré dans `scripts/ruleset-commun.sh` et vérifié
 par un test.
 
-Un seul workflow est imposé, `.github/workflows/conformite.yml`, déclenché sur
-pull request et merge queue. Il porte les cinq contrôles comme étapes nommées
-d'un même job :
+Un seul workflow est imposé, `.github/workflows/conformite.yml`
+(« Conformité Baseline »), déclenché sur pull request et merge queue, **sur la
+branche par défaut seulement** (voir
+[Quand Conformité Baseline est requis](#quand-conformité-baseline-est-requis)).
+Il porte les cinq contrôles comme étapes nommées d'un même job :
 
 | Étape | Action | Durée moyenne |
 |---|---|---|
@@ -32,6 +34,138 @@ contrôle. Chaque étape porte `if: always()`, donc un échec n'empêche pas les
 suivantes de rendre leur verdict, et une étape « Verdict » les récapitule dans
 le résumé du job puis fait échouer le job si l'un d'eux a rougi. Sans elle, le
 job prendrait la couleur de sa dernière étape et un échec passerait inaperçu.
+
+### Quand Conformité Baseline est requis
+
+Décision du DG (2026-11-05) : contrôles complets seulement avant la branche par
+défaut. Ajustée le même jour par le responsable DevOps : les secrets sont arrêtés
+au pre-commit de chaque dépôt, sans check d'organisation vers `develop`. Trace :
+INTERNE67-2430.
+
+Le ruleset « Conformité Baseline » n'impose `conformite.yml` que sur la
+**branche par défaut** des dépôts, c'est-à-dire à la promotion vers la production, et le relance à chaque pull request vers elle.
+Une pull request vers une autre branche (`develop`) n'a **aucun check
+d'organisation**. Le partage est fait par le **ruleset**, pas par une condition
+dans le workflow : un workflow qui choisit son mode d'après `base_ref` se contourne
+en reciblant la pull request.
+
+| Cible de la pull request | Check d'organisation |
+|---|---|
+| Branche par défaut (promotion vers la production) | `Conformité Baseline`, complet, gitleaks sur l'arbre compris |
+| Toute autre branche (`develop`) | aucun |
+| Après la fusion sur `develop` | `Conformité Baseline` en signal, si le dépôt a ajouté le workflow (voir plus bas) |
+
+Le ruleset ne vise **jamais** toutes les branches : la doc GitHub de la règle
+« Require workflows to pass before merging » précise qu'elle **bloque les pushs
+directs** sur les branches ciblées et ne doit viser que des branches dont tous
+les changements passent par pull request. Il porte `do_not_enforce_on_create:
+true` sur la règle `workflows` (paramètre de l'API des rulesets : la création
+d'une branche ou d'un dépôt n'est pas bloquée par un check qui ne peut pas
+encore exister). Le périmètre de dépôts reste « tous sauf les exclusions ».
+
+**Les secrets sont arrêtés au pre-commit.** Sans check d'organisation vers
+`develop`, la protection contre un secret poussé repose sur un **hook pre-commit
+gitleaks dans chaque dépôt**. Le modèle est celui de CogniFlo :
+`scripts/gitleaks-precommit.sh` du dépôt `Baseline-quebec/cogniflo`. Recommandé
+dans chaque dépôt actif. La promotion vers la branche par défaut reste le dernier
+filet : le workflow complet y scanne l'arbre avec gitleaks, sans exclusion.
+
+**Mise en garde.** Les pull requests vers `develop` ne sont plus bloquées par
+aucun check d'organisation, alors que celles vers la branche par défaut le
+restent. Un dépôt dont la branche par défaut n'est pas la branche de production
+(par exemple production sur `main`, branche par défaut `develop`) n'a pas de
+check requis vers `main`. À vérifier dépôt par dépôt avant la bascule.
+
+**Reciblage.** Si l'on change la cible d'une pull request de `develop` vers la
+branche par défaut, `Conformité Baseline` est absent du SHA de la pull request :
+la fusion reste **bloquée** jusqu'au prochain push ou jusqu'à une fermeture suivie
+d'une réouverture. Il n'y a donc pas de trou de reciblage.
+
+**Séquence de bascule.** Le ruleset est déclaré dans `scripts/ruleset-commun.sh` ;
+les gestes passent par les scripts, jamais par des `gh api` faits à la main (un
+`creer-ruleset.sh` relancé recréerait sinon l'ancienne conception). Prérequis :
+`gh auth refresh -h github.com -s admin:org` (plus l'autorisation SSO). À faire
+dans une fenêtre calme, après un message aux équipes.
+
+```bash
+# 1. fusionner la pull request
+# 2. déplacer le tag majeur, depuis main à jour : le ruleset lit le workflow sous
+#    refs/tags/v2 (conformite.yml gagne `workflow_call` et son en-tête)
+git checkout main && git pull
+git fetch origin && git log --oneline v2..origin/main   # ne doit montrer QUE le
+#    commit de cette pull request : sinon le déplacement publierait autre chose
+git tag -f v2 && git push -f origin v2
+# 3. restreindre « Conformité Baseline » à la branche par défaut (retire develop)
+DRY_RUN=1 AVEC_CONDITIONS=1 ./scripts/maj-ruleset.sh   # à blanc, d'abord
+AVEC_CONDITIONS=1 ./scripts/maj-ruleset.sh
+```
+
+Les scripts sont idempotents : relancés, ils répondent « Rien a changer ».
+`creer-ruleset.sh` et `maj-ruleset.sh` refusent de s'exécuter si le workflow visé
+est absent du tag, et sortent en erreur, avant tout appel `gh`, au moindre
+argument (l'ancienne clé `secrets` ou `conformite` n'existe plus).
+`maj-ruleset.sh` ne renvoie `rules` que si elles changent, en partant des règles
+vivantes (les autres règles et paramètres survivent), remplace seulement les
+branches des conditions vivantes (les exclusions réelles survivent) et ne touche
+jamais au mode d'application.
+
+**Retour arrière** : remettre `refs/heads/develop` dans `BRANCHES`
+(`scripts/ruleset-commun.sh`) puis `AVEC_CONDITIONS=1 ./scripts/maj-ruleset.sh`,
+ou, pour suspendre le ruleset entier, `./scripts/activer-ruleset.sh disabled`.
+
+### Conformité après la fusion sur develop
+
+Décision du 2026-11-05 : « Conformité Baseline » tourne aussi **après la fusion
+sur `develop`**, comme **signal** : un `push` n'empêche aucune fusion, un échec
+rend seulement le run rouge. Sur la pull request vers la branche par défaut, il
+reste relancé et requis par le ruleset. Pour cela `conformite.yml` est
+appelable (`workflow_call`) ; chaque dépôt ajoute ce petit workflow,
+`.github/workflows/conformite-develop.yml` :
+
+```yaml
+name: Conformité après fusion sur develop
+
+on:
+  push:
+    branches: [develop]
+
+# Le dernier push gagne : un run en cours sur develop est annulé par le suivant.
+# Ce nom de groupe DOIT différer de celui du workflow appelé
+# (`conformite-<dépôt>-<ref>`) : deux groupes identiques, appelant et appelé,
+# s'annulent mutuellement.
+concurrency:
+  group: conformite-apres-fusion-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformite:
+    # Un workflow appelé ne peut pas obtenir plus de permissions que l'appelant :
+    # `issues: write` sert à l'étape des modèles LLM, qui ouvre des issues.
+    permissions:
+      contents: read
+      issues: write
+    uses: Baseline-quebec/.github/.github/workflows/conformite.yml@v2
+    secrets: inherit
+```
+
+Ce que cela change, et pourquoi cela fonctionne :
+
+- **Le dépôt scanné est l'appelant.** En `workflow_call`, le contexte `github`
+  est celui de l'appelant : `actions/checkout` sans `repository` extrait le dépôt
+  appelant, `github.repository` le désigne (le garde qui exclut ce dépôt-ci reste
+  valable) et les variables `vars.*` sont les siennes. Les actions
+  `Baseline-quebec/.github/actions/...@v2` se résolvent comme en exécution
+  imposée.
+- **Permissions et secrets viennent de l'appelant.** Il doit accorder
+  `contents: read` et `issues: write`, et passer ses secrets
+  (`secrets: inherit`, pour `LLM_SCAN_WEBHOOK_TOKEN`, facultatif).
+- **Pas de pull request en `push`.** gitleaks lit l'arbre complet et semgrep
+  retombe sur l'analyse complète (l'incrémental n'existe que sur
+  `pull_request`). Les étapes bloquantes peuvent rougir le run : c'est voulu.
+- **Accès.** Le dépôt `.github` doit autoriser l'accès à ses workflows aux autres
+  dépôts de l'organisation (Settings, Actions, Access).
+- Le nom du job reste `Conformité Baseline`, mais ce run n'est pas un check requis :
+  seul le ruleset sur la branche par défaut l'exige.
 
 La détection de dérive des modèles LLM, c'est-à-dire un modèle qui devient
 déprécié alors que le code n'a pas bougé, reste couverte par le cron mensuel de
@@ -470,22 +604,26 @@ quoi que ce soit tant qu'on n'a pas mesuré le bruit réel.
 ```bash
 gh auth refresh -h github.com -s admin:org   # une seule fois, plus l'autorisation SSO
 
-./scripts/creer-ruleset.sh          # crée le ruleset
-./scripts/activer-ruleset.sh        # Active : le scan s'exécute, sans bloquer
+./scripts/creer-ruleset.sh              # crée le ruleset
+./scripts/activer-ruleset.sh            # Active : le scan s'exécute, sans bloquer
 # ... mesurer un mois, curer politique.yaml ...
 # puis passer l'action en mode: bloquant dans son workflow et redéplacer le tag majeur
 ```
 
 ### Ajouter un contrôle à un ruleset déjà créé
 
-Ne pas relancer `creer-ruleset.sh`, qui échouerait sur un doublon de nom. La
-liste des workflows imposés **et le périmètre** vivent dans
+`creer-ruleset.sh` est idempotent : si un ruleset de ce nom existe déjà, il ne
+crée rien et s'arrête sans erreur. La liste des workflows imposés **et le
+périmètre** du ruleset vivent dans
 `scripts/ruleset-commun.sh`, partagés entre création et mise à jour pour qu'un
 contrôle ajouté d'un côté ne manque jamais de l'autre.
 
-`maj-ruleset.sh` n'envoie que `rules` : les champs omis d'un PUT de ruleset
-sont laissés tels quels par GitHub, donc ce script ne peut pas écraser le
-périmètre au passage. Il compare quand même les exclusions réelles à celles
+`maj-ruleset.sh` retrouve le ruleset par son nom et n'envoie que `rules` :
+les champs omis d'un PUT de ruleset sont laissés tels quels par GitHub, donc ce
+script ne peut pas écraser le périmètre au passage. Pour changer les **branches**
+ciblées, `AVEC_CONDITIONS=1` envoie aussi `conditions` : les conditions vivantes
+dont seules les branches sont remplacées (les exclusions réelles survivent). Sans
+ce drapeau, une dérive de branches est seulement signalée. Il compare quand même les exclusions réelles à celles
 déclarées et **avertit en cas de dérive** : c'est le seul moment où quelqu'un
 regarde les deux côtés. Cette dérive a déjà existé — `Marketing` et `Ventes`
 étaient exclus en production sans que le script les nomme, si bien qu'une

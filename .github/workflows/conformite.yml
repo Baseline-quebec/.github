@@ -22,6 +22,41 @@
 # exécutions dans ce dépôt-ci : en exécution imposée, GitHub force ces deux
 # événements et ignore le bloc `on`.
 #
+# QUAND CE WORKFLOW EST REQUIS
+#
+# Décision du DG (2026-11-05) : contrôles complets seulement avant la branche par
+# défaut. Ajustée le même jour par le responsable DevOps : les secrets sont
+# arrêtés au pre-commit de chaque dépôt, sans check d'organisation vers
+# `develop`. Trace : INTERNE67-2430.
+#
+# Il n'est requis que sur la BRANCHE PAR DÉFAUT des dépôts, et relancé à chaque
+# pull request vers elle : c'est la promotion vers la production. Une pull
+# request vers une autre branche (`develop`) n'a aucun check d'organisation. Les
+# secrets sont arrêtés au pre-commit, dans chaque dépôt (hook gitleaks, voir le
+# README) ; ce workflow complet, gitleaks sur l'arbre compris, est le DERNIER
+# FILET avant la production. Le choix se fait par le ruleset et non dans ce
+# fichier : recibler une pull request ne peut contourner aucun contrôle (une pull
+# request reciblée vers la branche par défaut n'a pas ce check sur son SHA, donc
+# la fusion reste bloquée jusqu'au prochain push).
+#
+# APRÈS LA FUSION SUR DEVELOP (workflow_call)
+#
+# Décision du 2026-11-05 : « Conformité Baseline » tourne aussi après la fusion
+# sur `develop`, comme SIGNAL (un `push` n'empêche aucune fusion ; un échec rend
+# seulement le run rouge). Chaque dépôt ajoute un petit workflow qui appelle
+# celui-ci (`conformite-develop.yml`, exemple dans le README). En `workflow_call`,
+# le contexte `github` est celui de l'APPELANT : `actions/checkout` sans
+# `repository` extrait donc le dépôt appelant, `github.repository` désigne le
+# dépôt appelant (le garde ci-dessous reste valable) et `vars` est celui de
+# l'appelant. Les `uses: Baseline-quebec/.github/actions/...@v2` se résolvent
+# normalement. Les permissions viennent de l'appelant, qui doit accorder
+# `contents: read` et `issues: write` : un workflow appelé ne peut pas en obtenir
+# plus. L'appelant passe ses secrets par `secrets: inherit`. En `push`, il n'y a
+# ni fusion de test ni pull request : gitleaks lit l'arbre complet et semgrep
+# retombe sur l'analyse complète (`base-semgrep` ne vaut `fusion` que sur
+# `pull_request`). Le bloc `on` est ignoré en exécution imposée, donc le rôle de
+# check requis sur la branche par défaut ne change pas.
+#
 # Pour modifier une politique, éditer actions/<scan>/politique.yaml puis
 # déplacer le tag majeur courant (v2) : les dépôts suivent sans aucune
 # modification. Le tag majeur est MOUVANT et suit les correctifs ; une rupture
@@ -33,6 +68,12 @@ name: Conformité Baseline
 on:
   pull_request:
   merge_group:
+  # Appelable par un autre dépôt (voir « APRÈS LA FUSION SUR DEVELOP »). Aucune
+  # entrée obligatoire ; le secret est facultatif. Ignoré en exécution imposée.
+  workflow_call:
+    secrets:
+      LLM_SCAN_WEBHOOK_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       mode:
