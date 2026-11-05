@@ -1,12 +1,14 @@
 """`conformite.yml` garde les contrôles complets, sans condition de mode.
 
-Le partage selon la cible de la pull request ne se fait PAS dans ce fichier
-(décision du 2026-11-05, INTERNE67-2430 : un choix par `base_ref` dans le
-workflow se contourne en reciblant la pull request). Un ruleset impose ce
-workflow sur la branche par défaut seulement ; vers une autre branche, aucun
-check d'organisation (les secrets sont arrêtés au pre-commit). Ces tests gardent
-donc ce qui doit rester vrai ici : le nom que le ruleset exige, un seul job, et
-aucune logique de mode qui allégerait un contrôle, gitleaks sur l'arbre compris.
+Le partage selon la cible de la pull request ne se fait PAS dans ce fichier : un
+choix par `base_ref` dans le workflow se contourne en reciblant la pull request.
+Le ruleset d'organisation impose ce workflow sur `develop` et sur la branche par
+défaut (2026-11-05, essai de restriction annulé le même jour pour ne pas
+impacter les autres dépôts, INTERNE67-2430). Un dépôt exclu du ruleset
+(CogniFlo) l'appelle lui-même par `workflow_call`. Ces tests gardent donc ce qui
+doit rester vrai ici : le nom que le ruleset exige, un seul job, l'appel possible
+par un autre dépôt, et aucune logique de mode qui allégerait un contrôle,
+gitleaks sur l'arbre compris.
 """
 
 from __future__ import annotations

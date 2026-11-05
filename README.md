@@ -8,12 +8,14 @@ destiné à être copié dans un dépôt : le principe est justement qu'il n'y a
 ## Ce qui est imposé
 
 Le périmètre est « tous les dépôts sauf `tracking-llm-discontinued`,
-`Marketing` et `Ventes` », déclaré dans `scripts/ruleset-commun.sh` et vérifié
-par un test.
+`Marketing`, `Ventes`, `bswh-baylee`, `serko-northsky`, `baseline-automation`,
+`baseline-tresorier` et `cogniflo` », déclaré dans `scripts/ruleset-commun.sh` et
+vérifié par un test. `cogniflo` gère sa propre conformité (voir
+[Dépôt qui gère sa propre conformité](#dépôt-qui-gère-sa-propre-conformité-exemple--cogniflo)).
 
 Un seul workflow est imposé, `.github/workflows/conformite.yml`
-(« Conformité Baseline »), déclenché sur pull request et merge queue, **sur la
-branche par défaut seulement** (voir
+(« Conformité Baseline »), déclenché sur pull request et merge queue, sur
+`develop` et sur la branche par défaut (voir
 [Quand Conformité Baseline est requis](#quand-conformité-baseline-est-requis)).
 Il porte les cinq contrôles comme étapes nommées d'un même job :
 
@@ -37,23 +39,19 @@ job prendrait la couleur de sa dernière étape et un échec passerait inaperçu
 
 ### Quand Conformité Baseline est requis
 
-Décision du DG (2026-11-05) : contrôles complets seulement avant la branche par
-défaut. Ajustée le même jour par le responsable DevOps : les secrets sont arrêtés
-au pre-commit de chaque dépôt, sans check d'organisation vers `develop`. Trace :
-INTERNE67-2430.
-
-Le ruleset « Conformité Baseline » n'impose `conformite.yml` que sur la
-**branche par défaut** des dépôts, c'est-à-dire à la promotion vers la production, et le relance à chaque pull request vers elle.
-Une pull request vers une autre branche (`develop`) n'a **aucun check
-d'organisation**. Le partage est fait par le **ruleset**, pas par une condition
-dans le workflow : un workflow qui choisit son mode d'après `base_ref` se contourne
-en reciblant la pull request.
+Le ruleset « Conformité Baseline » impose `conformite.yml` sur `develop` et sur la
+**branche par défaut** des dépôts (`refs/heads/develop` et `~DEFAULT_BRANCH`),
+comme avant le 2026-11-05. Historique : le 2026-11-05, essai de restriction à la
+branche par défaut, annulé le même jour pour ne pas impacter les autres dépôts.
+Trace : INTERNE67-2430. Le choix se fait par le **ruleset**, pas par une
+condition dans le workflow : un workflow qui choisit son mode d'après `base_ref`
+se contourne en reciblant la pull request.
 
 | Cible de la pull request | Check d'organisation |
 |---|---|
-| Branche par défaut (promotion vers la production) | `Conformité Baseline`, complet, gitleaks sur l'arbre compris |
-| Toute autre branche (`develop`) | aucun |
-| Après la fusion sur `develop` | `Conformité Baseline` en signal, si le dépôt a ajouté le workflow (voir plus bas) |
+| `develop` | `Conformité Baseline`, complet |
+| Branche par défaut (promotion vers la production) | `Conformité Baseline`, complet |
+| Toute autre branche | aucun |
 
 Le ruleset ne vise **jamais** toutes les branches : la doc GitHub de la règle
 « Require workflows to pass before merging » précise qu'elle **bloque les pushs
@@ -61,80 +59,65 @@ directs** sur les branches ciblées et ne doit viser que des branches dont tous
 les changements passent par pull request. Il porte `do_not_enforce_on_create:
 true` sur la règle `workflows` (paramètre de l'API des rulesets : la création
 d'une branche ou d'un dépôt n'est pas bloquée par un check qui ne peut pas
-encore exister). Le périmètre de dépôts reste « tous sauf les exclusions ».
+encore exister). Les dépôts exclus sont ceux listés dans `EXCLUS`
+(`scripts/ruleset-commun.sh`).
 
-**Les secrets sont arrêtés au pre-commit.** Sans check d'organisation vers
-`develop`, la protection contre un secret poussé repose sur un **hook pre-commit
-gitleaks dans chaque dépôt**. Le modèle est celui de CogniFlo :
-`scripts/gitleaks-precommit.sh` du dépôt `Baseline-quebec/cogniflo`. Recommandé
-dans chaque dépôt actif. La promotion vers la branche par défaut reste le dernier
-filet : le workflow complet y scanne l'arbre avec gitleaks, sans exclusion.
+**Reciblage.** Si l'on change la cible d'une pull request, le check requis par la
+nouvelle cible est absent du SHA de la pull request : la fusion reste **bloquée**
+jusqu'au prochain push ou jusqu'à une fermeture suivie d'une réouverture.
 
-**Mise en garde.** Les pull requests vers `develop` ne sont plus bloquées par
-aucun check d'organisation, alors que celles vers la branche par défaut le
-restent. Un dépôt dont la branche par défaut n'est pas la branche de production
-(par exemple production sur `main`, branche par défaut `develop`) n'a pas de
-check requis vers `main`. À vérifier dépôt par dépôt avant la bascule.
+**Mettre à jour le ruleset réel** passe par `scripts/maj-ruleset.sh`, jamais par
+des `gh api` faits à la main (un `creer-ruleset.sh` relancé recréerait sinon une
+autre définition). Prérequis : `gh auth refresh -h github.com -s admin:org` (plus
+l'autorisation SSO). Le script retrouve le ruleset par son nom, ne renvoie `rules`
+que si elles changent (les autres règles et paramètres survivent), n'écrit les
+branches des conditions que sur `AVEC_CONDITIONS=1` (les exclusions réelles
+survivent) et **n'écrit jamais les exclusions** sans `AVEC_EXCLUSIONS=1`. Il ne
+touche jamais au mode d'application. Il est idempotent (« Rien a changer. ») et
+sort en erreur, avant tout appel `gh`, au moindre argument. `creer-ruleset.sh` et
+`maj-ruleset.sh` refusent aussi de s'exécuter si le workflow visé est absent du
+tag `v2`. `DRY_RUN=1` montre ce qui serait envoyé sans rien changer. Tant que
+`cogniflo` n'est pas exclu du ruleset réel, le script signale une dérive
+d'exclusion : c'est voulu.
 
-**Reciblage.** Si l'on change la cible d'une pull request de `develop` vers la
-branche par défaut, `Conformité Baseline` est absent du SHA de la pull request :
-la fusion reste **bloquée** jusqu'au prochain push ou jusqu'à une fermeture suivie
-d'une réouverture. Il n'y a donc pas de trou de reciblage.
+### Dépôt qui gère sa propre conformité (exemple : CogniFlo)
 
-**Séquence de bascule.** Le ruleset est déclaré dans `scripts/ruleset-commun.sh` ;
-les gestes passent par les scripts, jamais par des `gh api` faits à la main (un
-`creer-ruleset.sh` relancé recréerait sinon l'ancienne conception). Prérequis :
-`gh auth refresh -h github.com -s admin:org` (plus l'autorisation SSO). À faire
-dans une fenêtre calme, après un message aux équipes.
+CogniFlo a sa propre conformité : il est **exclu du ruleset d'organisation**
+(`cogniflo` dans `EXCLUS`), appelle `conformite.yml@v2` dans ses propres
+workflows et exige le check par un **ruleset de dépôt**. L'exclusion du ruleset
+réel est un geste de l'utilisateur, fait le moment venu :
 
 ```bash
-# 1. fusionner la pull request
-# 2. déplacer le tag majeur, depuis main à jour : le ruleset lit le workflow sous
-#    refs/tags/v2 (conformite.yml gagne `workflow_call` et son en-tête)
-git checkout main && git pull
-git fetch origin && git log --oneline v2..origin/main   # ne doit montrer QUE le
-#    commit de cette pull request : sinon le déplacement publierait autre chose
-git tag -f v2 && git push -f origin v2
-# 3. restreindre « Conformité Baseline » à la branche par défaut (retire develop)
-DRY_RUN=1 AVEC_CONDITIONS=1 ./scripts/maj-ruleset.sh   # à blanc, d'abord
-AVEC_CONDITIONS=1 ./scripts/maj-ruleset.sh
+gh auth refresh -h github.com -s admin:org            # une seule fois, plus SSO
+DRY_RUN=1 AVEC_CONDITIONS=1 AVEC_EXCLUSIONS=1 ./scripts/maj-ruleset.sh   # à blanc d'abord
+AVEC_CONDITIONS=1 AVEC_EXCLUSIONS=1 ./scripts/maj-ruleset.sh
 ```
 
-Les scripts sont idempotents : relancés, ils répondent « Rien a changer ».
-`creer-ruleset.sh` et `maj-ruleset.sh` refusent de s'exécuter si le workflow visé
-est absent du tag, et sortent en erreur, avant tout appel `gh`, au moindre
-argument (l'ancienne clé `secrets` ou `conformite` n'existe plus).
-`maj-ruleset.sh` ne renvoie `rules` que si elles changent, en partant des règles
-vivantes (les autres règles et paramètres survivent), remplace seulement les
-branches des conditions vivantes (les exclusions réelles survivent) et ne touche
-jamais au mode d'application.
+L'essai à blanc affiche les exclusions actuelles et visées, puis le corps qui
+serait envoyé ; il n'écrit rien. Le corps ne contient les branches et les règles
+que s'ils divergent de la déclaration.
 
-**Retour arrière** : remettre `refs/heads/develop` dans `BRANCHES`
-(`scripts/ruleset-commun.sh`) puis `AVEC_CONDITIONS=1 ./scripts/maj-ruleset.sh`,
-ou, pour suspendre le ruleset entier, `./scripts/activer-ruleset.sh disabled`.
-
-### Conformité après la fusion sur develop
-
-Décision du 2026-11-05 : « Conformité Baseline » tourne aussi **après la fusion
-sur `develop`**, comme **signal** : un `push` n'empêche aucune fusion, un échec
-rend seulement le run rouge. Sur la pull request vers la branche par défaut, il
-reste relancé et requis par le ruleset. Pour cela `conformite.yml` est
-appelable (`workflow_call`) ; chaque dépôt ajoute ce petit workflow,
-`.github/workflows/conformite-develop.yml` :
+Pour que le dépôt appelle le workflow, il ajoute, par exemple,
+`.github/workflows/conformite-appel.yml`, qui tourne **après la fusion sur
+`develop`** (comme **signal** : un `push` n'empêche aucune fusion, un échec rend
+seulement le run rouge) et **sur ses pull requests vers la branche par défaut**,
+où le ruleset de dépôt exige le check :
 
 ```yaml
-name: Conformité après fusion sur develop
+name: Conformité (appel de l'organisation)
 
 on:
   push:
     branches: [develop]
+  pull_request:
+    branches: [main]   # la branche par défaut du dépôt
 
-# Le dernier push gagne : un run en cours sur develop est annulé par le suivant.
-# Ce nom de groupe DOIT différer de celui du workflow appelé
+# Le dernier push gagne : un run en cours sur la même branche est annulé par le
+# suivant. Ce nom de groupe DOIT différer de celui du workflow appelé
 # (`conformite-<dépôt>-<ref>`) : deux groupes identiques, appelant et appelé,
 # s'annulent mutuellement.
 concurrency:
-  group: conformite-apres-fusion-${{ github.repository }}-${{ github.ref }}
+  group: conformite-appel-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -148,7 +131,8 @@ jobs:
     secrets: inherit
 ```
 
-Ce que cela change, et pourquoi cela fonctionne :
+Le ruleset de dépôt exige le check `Conformité Baseline` (nom du job appelé) sur
+la branche par défaut. Ce qui fait fonctionner l'appel :
 
 - **Le dépôt scanné est l'appelant.** En `workflow_call`, le contexte `github`
   est celui de l'appelant : `actions/checkout` sans `repository` extrait le dépôt
@@ -164,30 +148,6 @@ Ce que cela change, et pourquoi cela fonctionne :
   `pull_request`). Les étapes bloquantes peuvent rougir le run : c'est voulu.
 - **Accès.** Le dépôt `.github` doit autoriser l'accès à ses workflows aux autres
   dépôts de l'organisation (Settings, Actions, Access).
-- Le nom du job reste `Conformité Baseline`, mais ce run n'est pas un check requis :
-  seul le ruleset sur la branche par défaut l'exige.
-
-La détection de dérive des modèles LLM, c'est-à-dire un modèle qui devient
-déprécié alors que le code n'a pas bougé, reste couverte par le cron mensuel de
-[`tracking-llm-discontinued`](https://github.com/Baseline-quebec/tracking-llm-discontinued).
-
-Les workflows de sécurité s'excluent de ce dépôt-ci (`if: github.repository !=`) :
-ils référencent leur action par le tag majeur courant, que la pull request qui
-introduit un contrôle n'a pas encore déplacé. La CI les exerce par leur chemin local
-(`./actions/...`), ce que l'exécution imposée ne peut pas faire, donc chaque
-modification est bien testée de bout en bout avant la fusion.
-
-Le contrôle de configuration Sentry est **bloquant** dès sa mise en service :
-c'est la condition posée par le Directeur général le 2026-10-10 pour garder
-Sentry (NORM-TI-DEV-01, section 9), et il ne lit que le source, donc il n'a pas
-de bruit à mesurer d'abord. Voir [Configuration Sentry](#configuration-sentry).
-
-Les deux contrôles de sécurité sont en **mode observation** : ils produisent
-leur rapport et n'empêchent aucune fusion. Passer au mode bloquant se fait dans
-le workflow correspondant, une fois le volume réel de constats mesuré sur les
-dépôts existants. Le niveau d'application vit dans l'entrée `mode` du workflow
-et non dans le ruleset : en application *Evaluate*, GitHub journalise la règle
-sans jamais lancer le workflow, donc sans produire le moindre rapport.
 
 ### Audit de sécurité du code
 

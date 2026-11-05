@@ -63,7 +63,8 @@ def test_exclusions_connues_sont_declarees() -> None:
     et Ventes sont des dépôts de travail, essentiellement du HTML de sites et
     de présentations. bswh-baylee et serko-northsky sont hors maintenance
     Baseline depuis le 2026-09-01 : personne n'y traite les checks imposés sur
-    les pull requests.
+    les pull requests. baseline-automation et baseline-tresorier sont exclus du
+    ruleset réel. cogniflo gère sa propre conformité (INTERNE67-2430).
     """
     assert set(variable("EXCLUS")) == {
         "tracking-llm-discontinued",
@@ -71,7 +72,11 @@ def test_exclusions_connues_sont_declarees() -> None:
         "Ventes",
         "bswh-baylee",
         "serko-northsky",
+        "baseline-automation",
+        "baseline-tresorier",
+        "cogniflo",
     }
+    assert len(variable("EXCLUS")) == 8
 
 
 def test_un_seul_ruleset_aux_noms_exacts() -> None:
@@ -80,15 +85,14 @@ def test_un_seul_ruleset_aux_noms_exacts() -> None:
     assert appeler("charge_ruleset")["name"] == "Conformité Baseline"
 
 
-def test_le_ruleset_ne_vise_que_la_branche_par_defaut() -> None:
-    """Decision du 2026-11-05 : plus de check d'organisation vers `develop`, la
-    promotion vers la branche par defaut est le dernier filet. Jamais `~ALL` :
-    la regle « Require workflows » bloque les pushs directs sur les branches
-    ciblees (doc GitHub)."""
-    assert variable("BRANCHES") == ["~DEFAULT_BRANCH"]
+def test_le_ruleset_vise_la_branche_par_defaut_et_develop() -> None:
+    """Le 2026-11-05, la restriction a la branche par defaut a ete annulee le
+    meme jour pour ne pas impacter les autres depots (INTERNE67-2430). Jamais
+    `~ALL` : la regle « Require workflows » bloque les pushs directs sur les
+    branches ciblees (doc GitHub)."""
+    assert sorted(variable("BRANCHES")) == ["refs/heads/develop", "~DEFAULT_BRANCH"]
     include = appeler("conditions_ruleset")["ref_name"]["include"]
-    assert include == ["~DEFAULT_BRANCH"]
-    assert "refs/heads/develop" not in include
+    assert sorted(include) == ["refs/heads/develop", "~DEFAULT_BRANCH"]
     assert "~ALL" not in include
 
 
@@ -311,10 +315,13 @@ def test_un_argument_inattendu_est_fatal_avant_tout_appel_gh(
     assert not (tmp_path / "gh.appele").exists(), "gh a ete appele"
 
 
-def vivant_conformite(branches_vivantes: list[str]) -> dict[str, Any]:
-    """Le ruleset tel que l'API le rendrait, avec une exclusion de plus que la
-    declaration pour verifier qu'elle survit."""
-    exclus = [*variable("EXCLUS"), "depot-exclu-a-la-main"]
+def vivant_conformite(
+    branches_vivantes: list[str] | None = None, exclus: list[str] | None = None
+) -> dict[str, Any]:
+    """Le ruleset tel que l'API le rendrait. Par defaut conforme a la
+    declaration ; les arguments fabriquent une derive."""
+    branches_vivantes = variable("BRANCHES") if branches_vivantes is None else branches_vivantes
+    exclus = variable("EXCLUS") if exclus is None else exclus
     return {
         "id": 42,
         "conditions": {
@@ -340,12 +347,13 @@ def corps_du_put(resultat: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     return json.loads(resultat.stdout[resultat.stdout.index("{") :])
 
 
-def test_maj_restreint_conformite_a_la_branche_par_defaut_sur_demande(tmp_path: Path) -> None:
-    vivant = vivant_conformite(["~DEFAULT_BRANCH", "refs/heads/develop"])
+def test_maj_ajoute_develop_sur_demande_et_garde_les_exclusions_vivantes(tmp_path: Path) -> None:
+    exclus = [*variable("EXCLUS"), "depot-exclu-a-la-main"]
+    vivant = vivant_conformite(["~DEFAULT_BRANCH"], exclus)
     resultat = lancer_maj(tmp_path, vivant, AVEC_CONDITIONS="1")
     assert resultat.returncode == 0, resultat.stderr
     corps = corps_du_put(resultat)
-    assert corps["conditions"]["ref_name"]["include"] == ["~DEFAULT_BRANCH"]
+    assert sorted(corps["conditions"]["ref_name"]["include"]) == sorted(variable("BRANCHES"))
     # Les exclusions reelles survivent, meme celle que le depot ne declare pas.
     assert "depot-exclu-a-la-main" in corps["conditions"]["repository_name"]["exclude"]
     assert "enforcement" not in corps
@@ -355,7 +363,7 @@ def test_maj_restreint_conformite_a_la_branche_par_defaut_sur_demande(tmp_path: 
 
 
 def test_maj_sans_drapeau_signale_la_derive_sans_rien_envoyer(tmp_path: Path) -> None:
-    vivant = vivant_conformite(["~DEFAULT_BRANCH", "refs/heads/develop"])
+    vivant = vivant_conformite(["~DEFAULT_BRANCH"])
     resultat = lancer_maj(tmp_path, vivant)
     assert resultat.returncode == 0, resultat.stderr
     assert "Derive de branches" in resultat.stdout
@@ -364,10 +372,60 @@ def test_maj_sans_drapeau_signale_la_derive_sans_rien_envoyer(tmp_path: Path) ->
 
 
 def test_maj_est_idempotente(tmp_path: Path) -> None:
-    vivant = vivant_conformite(["~DEFAULT_BRANCH"])
-    resultat = lancer_maj(tmp_path, vivant, AVEC_CONDITIONS="1")
+    resultat = lancer_maj(tmp_path, vivant_conformite(), AVEC_CONDITIONS="1", AVEC_EXCLUSIONS="1")
     assert resultat.returncode == 0, resultat.stderr
     assert "Rien a changer." in resultat.stdout
+
+
+ANCIENNES_EXCLUSIONS = [
+    "tracking-llm-discontinued",
+    "Marketing",
+    "Ventes",
+    "bswh-baylee",
+    "serko-northsky",
+    "baseline-automation",
+    "baseline-tresorier",
+]
+
+
+def test_maj_n_ecrit_jamais_les_exclusions_par_defaut(tmp_path: Path) -> None:
+    """Tant que cogniflo n'est pas exclu du ruleset reel, la derive est signalee
+    (voulu), mais jamais ecrite sans AVEC_EXCLUSIONS=1."""
+    vivant = vivant_conformite(exclus=ANCIENNES_EXCLUSIONS)
+    resultat = lancer_maj(tmp_path, vivant, AVEC_CONDITIONS="1")
+    assert resultat.returncode == 0, resultat.stderr
+    assert "Derive de perimetre" in resultat.stdout
+    assert "AVEC_EXCLUSIONS=1" in resultat.stdout
+    assert "Rien a changer." in resultat.stdout
+
+
+def test_maj_avec_exclusions_remplace_les_exclusions_par_exclus(tmp_path: Path) -> None:
+    vivant = vivant_conformite(exclus=ANCIENNES_EXCLUSIONS)
+    resultat = lancer_maj(tmp_path, vivant, AVEC_CONDITIONS="1", AVEC_EXCLUSIONS="1")
+    assert resultat.returncode == 0, resultat.stderr
+    corps = corps_du_put(resultat)
+    exclues = corps["conditions"]["repository_name"]["exclude"]
+    assert sorted(exclues) == sorted(variable("EXCLUS"))
+    assert "cogniflo" in exclues
+    # Rien d'autre ne change : branches vivantes, regles deja conformes, mode.
+    assert sorted(corps["conditions"]["ref_name"]["include"]) == sorted(variable("BRANCHES"))
+    assert corps["conditions"]["repository_name"]["include"] == ["~ALL"]
+    assert "rules" not in corps
+    assert "enforcement" not in corps
+
+
+def test_maj_exclusions_a_blanc_n_appelle_pas_put(tmp_path: Path) -> None:
+    vivant = vivant_conformite(exclus=ANCIENNES_EXCLUSIONS)
+    resultat = lancer_maj(tmp_path, vivant, AVEC_CONDITIONS="1", AVEC_EXCLUSIONS="1")
+    assert resultat.returncode == 0, resultat.stderr
+    assert not (tmp_path / "put").exists()
+
+
+def test_maj_exclusions_sans_conditions_est_fatal_avant_tout_appel_gh(tmp_path: Path) -> None:
+    resultat = lancer_maj(tmp_path, vivant_conformite(), AVEC_EXCLUSIONS="1")
+    assert resultat.returncode == 2
+    assert "AVEC_CONDITIONS=1" in resultat.stderr
+    assert not (tmp_path / "gh.appele").exists(), "gh a ete appele"
 
 
 AUTRE_REGLE = {"type": "pull_request", "parameters": {"required_approving_review_count": 1}}
@@ -376,7 +434,7 @@ AUTRE_REGLE = {"type": "pull_request", "parameters": {"required_approving_review
 def test_maj_des_regles_conserve_les_autres_regles_et_parametres(tmp_path: Path) -> None:
     """Un PUT de `rules` remplace tout le tableau : les autres regles vivantes et
     les parametres inconnus de la regle `workflows` doivent survivre."""
-    vivant = vivant_conformite(["~DEFAULT_BRANCH"])
+    vivant = vivant_conformite()
     vieux = {"repository_id": 1, "path": ".github/workflows/vieux.yml", "ref": "x"}
     vivant["rules"] = [
         AUTRE_REGLE,
@@ -394,7 +452,7 @@ def test_maj_des_regles_conserve_les_autres_regles_et_parametres(tmp_path: Path)
 
 
 def test_maj_remet_do_not_enforce_on_create_perdu(tmp_path: Path) -> None:
-    vivant = vivant_conformite(["~DEFAULT_BRANCH"])
+    vivant = vivant_conformite()
     del vivant["rules"][0]["parameters"]["do_not_enforce_on_create"]
     vivant["rules"].append(AUTRE_REGLE)
     resultat = lancer_maj(tmp_path, vivant)
@@ -405,7 +463,7 @@ def test_maj_remet_do_not_enforce_on_create_perdu(tmp_path: Path) -> None:
 
 
 def test_maj_ajoute_la_regle_workflows_si_elle_manquait(tmp_path: Path) -> None:
-    vivant = vivant_conformite(["~DEFAULT_BRANCH"])
+    vivant = vivant_conformite()
     vivant["rules"] = [AUTRE_REGLE]
     corps = corps_du_put(lancer_maj(tmp_path, vivant))
     assert corps["rules"][0] == AUTRE_REGLE

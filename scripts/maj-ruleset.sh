@@ -10,13 +10,13 @@
 # echouerait le check sur toutes les pull requests de l'organisation.
 #
 # Par defaut seul `rules` est envoye : le perimetre ne peut pas etre ecrase au
-# passage. Pour changer les BRANCHES ciblees (par exemple restreindre
-# « Conformité Baseline » a la branche par defaut, ce qui retire `develop`),
-# demander
-# `AVEC_CONDITIONS=1` : le script envoie alors aussi `conditions`, les
-# conditions vivantes dont seules les branches sont remplacees par celles de
-# ruleset-commun.sh (les exclusions reelles sont conservees). Sans ce drapeau, une derive de branches ou
-# d'exclusions est seulement signalee.
+# passage. Deux options, explicites, pour ecrire le perimetre :
+# - `AVEC_CONDITIONS=1` envoie aussi `conditions` : les conditions vivantes dont
+#   seules les BRANCHES sont remplacees par celles de ruleset-commun.sh ;
+# - `AVEC_EXCLUSIONS=1` (avec AVEC_CONDITIONS=1, sinon erreur) remplace en plus
+#   `repository_name.exclude` par EXCLUS. Le defaut reste « ne jamais ecrire les
+#   exclusions » : sans cette option elles sont conservees telles qu'elles sont
+#   vivantes, et une derive est seulement signalee.
 #
 # Idempotent : relance sans effet quand le ruleset est deja conforme.
 #
@@ -26,7 +26,8 @@
 # Usage :
 #   ./scripts/maj-ruleset.sh                        # workflows seulement
 #   AVEC_CONDITIONS=1 ./scripts/maj-ruleset.sh      # workflows et branches
-#   DRY_RUN=1 [AVEC_CONDITIONS=1] ./scripts/maj-ruleset.sh  # sans rien changer
+#   AVEC_CONDITIONS=1 AVEC_EXCLUSIONS=1 ./scripts/maj-ruleset.sh  # et exclusions
+#   DRY_RUN=1 [AVEC_CONDITIONS=1] [AVEC_EXCLUSIONS=1] ./scripts/maj-ruleset.sh  # a blanc
 
 set -euo pipefail
 
@@ -36,6 +37,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/ruleset-commun.sh"
 # Aucun argument : un seul ruleset. Un argument est une erreur, avant tout appel gh.
 if [ "$#" -ne 0 ]; then
   echo "Usage : $0 (aucun argument, un seul ruleset : « ${NOM_RULESET} »)" >&2
+  exit 2
+fi
+if [ "${AVEC_EXCLUSIONS:-0}" = "1" ] && [ "${AVEC_CONDITIONS:-0}" != "1" ]; then
+  echo "AVEC_EXCLUSIONS=1 exige AVEC_CONDITIONS=1 (les exclusions font partie de conditions)." >&2
   exit 2
 fi
 nom="$NOM_RULESET"
@@ -64,16 +69,22 @@ echo "  do_not_enforce_on_create : actuel $dne_actuel, visé $dne_vise"
 # creer-ruleset.sh reconstruirait un ruleset FAUX apres un incident. Le dire
 # ici est le seul moment ou quelqu'un regarde les deux cotes.
 exclus_vivants=$(jq -c '.conditions.repository_name.exclude // [] | sort' <<<"$vivant")
-exclus_declares=$(conditions_ruleset | jq -c '.repository_name.exclude | sort')
-if [ "$exclus_vivants" != "$exclus_declares" ]; then
+exclus_declarees=$(conditions_ruleset | jq -c '.repository_name.exclude | sort')
+echo "  exclusions actuelles : $exclus_vivants"
+echo "  exclusions visées    : $exclus_declarees"
+exclusions_a_changer=false
+[ "$exclus_vivants" = "$exclus_declarees" ] || exclusions_a_changer=true
+if [ "$exclusions_a_changer" = true ] && [ "${AVEC_EXCLUSIONS:-0}" != "1" ]; then
   echo
   echo "::warning::Derive de perimetre entre le ruleset et ce depot."
   echo "  exclusions reelles   : $exclus_vivants"
-  echo "  exclusions declarees : $exclus_declares"
-  echo "  Aligner EXCLUS dans scripts/ruleset-commun.sh, sinon creer-ruleset.sh"
-  echo "  reconstruira un perimetre different du vrai. Ce script n'ecrit jamais"
-  echo "  les exclusions."
+  echo "  exclusions declarees : $exclus_declarees"
+  echo "  Ce script n'ecrit JAMAIS les exclusions sans AVEC_EXCLUSIONS=1. Pour les"
+  echo "  appliquer : AVEC_CONDITIONS=1 AVEC_EXCLUSIONS=1 ./scripts/maj-ruleset.sh"
+  echo "  Sinon, aligner EXCLUS dans scripts/ruleset-commun.sh, faute de quoi"
+  echo "  creer-ruleset.sh reconstruirait un perimetre different du vrai."
   echo
+  exclusions_a_changer=false
 fi
 
 # Branches ciblees : meme angle mort, donc meme avertissement, sauf si
@@ -93,6 +104,8 @@ if [ "$conditions_a_changer" = true ] && [ "${AVEC_CONDITIONS:-0}" != "1" ]; the
   echo
   conditions_a_changer=false
 fi
+# Les exclusions ne s'ecrivent qu'avec AVEC_CONDITIONS=1 (garanti plus haut).
+[ "$exclusions_a_changer" = true ] && conditions_a_changer=true
 
 regles_a_changer=false
 [ "$actuel" = "$vise" ] && [ "$dne_actuel" = "$dne_vise" ] || regles_a_changer=true
@@ -124,7 +137,7 @@ done < <(printf '%s\n' "${WORKFLOWS[@]}")
 # seuls `workflows` et `do_not_enforce_on_create` de la regle `workflows` sont
 # remplaces (ajoutee si elle manquait). `conditions` n'est envoye que si demande
 # ET different, a partir des conditions vivantes dont seul `ref_name.include`
-# change : les exclusions reelles survivent. Le mode d'application n'est jamais
+# change : les exclusions reelles survivent, sauf avec AVEC_EXCLUSIONS=1. Le mode d'application n'est jamais
 # envoye (les champs omis d'un PUT de ruleset sont laisses tels quels).
 corps='{}'
 if [ "$regles_a_changer" = true ]; then
@@ -140,6 +153,10 @@ fi
 if [ "$conditions_a_changer" = true ]; then
   conditions=$(jq -c --argjson b "$branches_declarees" \
     '.conditions | .ref_name.include = $b' <<<"$vivant")
+  if [ "$exclusions_a_changer" = true ]; then
+    exclusions=$(conditions_ruleset | jq -c '.repository_name.exclude')
+    conditions=$(jq -c --argjson e "$exclusions" '.repository_name.exclude = $e' <<<"$conditions")
+  fi
   corps=$(jq -c --argjson c "$conditions" '. + {conditions: $c}' <<<"$corps")
 fi
 
