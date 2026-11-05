@@ -33,6 +33,45 @@ suivantes de rendre leur verdict, et une étape « Verdict » les récapitule da
 le résumé du job puis fait échouer le job si l'un d'eux a rougi. Sans elle, le
 job prendrait la couleur de sa dernière étape et un échec passerait inaperçu.
 
+**Quels contrôles, selon la cible** (décision du Directeur général, 2026-11-05).
+Le workflow lit la branche cible de la pull request et la compare à la branche
+par défaut du dépôt (`github.base_ref` contre
+`github.event.repository.default_branch`) :
+
+| Événement | Contrôles | gitleaks lit |
+|---|---|---|
+| Pull request vers une branche autre que la branche par défaut (par exemple `develop`) | gitleaks seul, bloquant | les commits de la pull request (diff) |
+| Pull request vers la branche par défaut (promotion vers la production) | les six étapes, mêmes modes bloquants | l'arbre complet |
+| `merge_group`, `workflow_dispatch` | les six étapes, inchangées | l'arbre complet |
+
+Pourquoi : un dépôt qui fonctionne par branches d'intégration rejouait les cinq
+contrôles à chaque pull request vers `develop`, puis encore à la promotion. Les
+quatre contrôles de dépendances, de configuration et de code sont rejoués en
+entier à la dernière porte avant la production ; un secret, lui, est déjà fuité
+dès qu'il est poussé dans une branche lisible, donc gitleaks bloque partout. Le
+nom du job et du check reste `Conformité Baseline` dans tous les cas (les
+rulesets l'exigent), et il reste un seul job.
+
+Le scan du diff garde les options de la décision D3 : même image épinglée,
+configuration par défaut, aucune exclusion, `.gitleaksignore` et
+`gitleaks:allow` ignorés, `--redact`. Il lit `base..head`, où `base` et `head`
+sont les deux parents du commit de fusion de test que GitHub extrait (la cible
+telle qu'elle est maintenant, et la tête de la pull request) ; le checkout prend
+alors l'historique complet (`fetch-depth: 0`), seul moyen d'atteindre l'ancêtre
+commun. Si le diff ne peut pas s'établir (historique tronqué, commit de fusion
+absent, ancêtre commun introuvable), gitleaks scanne l'arbre complet : un
+contrôle plus large, jamais un contrôle sauté. L'échec est fermé aussi pour le
+choix du mode : une branche cible ou une branche par défaut inconnue donne les
+contrôles complets. Les exceptions datées (voir le workflow) s'appliquent dans
+les deux modes.
+
+L'étape « Verdict » écrit le mode qui a tourné (« PR vers `develop` : secrets
+seulement » ou « PR vers la branche par défaut : contrôles complets ») et
+affiche « non exécuté » pour une étape sautée : elle n'est jamais comptée comme
+propre. Attention aux dépôts dont la branche par défaut n'est pas la branche de
+production : une pull request vers `main` y est « vers une autre branche » et ne
+reçoit que gitleaks.
+
 La détection de dérive des modèles LLM, c'est-à-dire un modèle qui devient
 déprécié alors que le code n'a pas bougé, reste couverte par le cron mensuel de
 [`tracking-llm-discontinued`](https://github.com/Baseline-quebec/tracking-llm-discontinued).

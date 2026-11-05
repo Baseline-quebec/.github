@@ -22,6 +22,31 @@
 # exécutions dans ce dépôt-ci : en exécution imposée, GitHub force ces deux
 # événements et ignore le bloc `on`.
 #
+# QUELS CONTRÔLES, SELON LA CIBLE (décision du Directeur général, 2026-11-05)
+#
+# Un dépôt qui travaille par branches d'intégration (feature -> develop ->
+# main) payait les cinq contrôles à chaque pull request vers `develop`, puis de
+# nouveau à la promotion vers la production. Le partage est donc le suivant :
+#
+# - pull_request dont la cible N'EST PAS la branche par défaut du dépôt :
+#   gitleaks SEUL, bloquant, sur les commits de la pull request (le diff
+#   `base..head`), pas sur l'arbre. Sentry, CVE, modèles, licences et audit du
+#   code ne tournent pas : ils sont rejoués en entier à la promotion.
+# - pull_request vers la branche par défaut : les six étapes, gitleaks sur
+#   l'arbre complet, mêmes modes bloquants qu'avant. C'est la dernière porte
+#   avant la production.
+# - merge_group et workflow_dispatch : comportement complet, inchangé. En cas
+#   de doute sur l'événement ou sur la branche par défaut, c'est ce mode, le
+#   plus strict, qui s'applique (`SECRETS_SEULEMENT` ne vaut `true` que si tout
+#   est connu et différent).
+#
+# gitleaks reste bloquant dans les DEUX modes : un secret poussé dans une
+# branche d'intégration est déjà fuité pour quiconque peut la lire. Le scan du
+# diff garde exactement les options de l'arbre (décision D3 : aucune exclusion,
+# même image, même configuration). S'il ne peut pas établir le diff (historique
+# tronqué, base introuvable), il retombe sur l'arbre complet, jamais sur
+# aucun scan.
+#
 # Pour modifier une politique, éditer actions/<scan>/politique.yaml puis
 # déplacer le tag majeur courant (v2) : les dépôts suivent sans aucune
 # modification. Le tag majeur est MOUVANT et suit les correctifs ; une rupture
@@ -64,9 +89,22 @@ jobs:
     # que le partage d'un seul demarrage rend inutile. Au-dela, c'est un
     # scanner bloque, pas un depot gros.
     timeout-minutes: 45
+    env:
+      # `true` seulement pour une pull request dont la cible est connue et
+      # diffère de la branche par défaut. Toute valeur manquante donne `false`,
+      # c'est-à-dire les contrôles complets (échec fermé). Les étapes et le
+      # verdict lisent cette seule variable : un seul endroit décide du mode.
+      SECRETS_SEULEMENT: ${{ github.event_name == 'pull_request' && github.base_ref != '' && github.event.repository.default_branch != '' && github.base_ref != github.event.repository.default_branch }}
+      CIBLE: ${{ github.base_ref }}
     steps:
+      # Historique complet seulement pour le scan du diff : il faut atteindre
+      # l'ancêtre commun entre la cible et la pull request, à profondeur
+      # inconnue. Les autres modes gardent la profondeur 1 (chaîne '0' et non
+      # le nombre 0, qui est faux et donnerait toujours 1 avec `&& ... ||`).
       - name: Récupérer le dépôt
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: ${{ env.SECRETS_SEULEMENT == 'true' && '0' || '1' }}
 
       # Références pleinement qualifiées obligatoires : en exécution imposée, le
       # dépôt courant est le dépôt cible, donc un chemin relatif « ./actions/... »
@@ -84,7 +122,9 @@ jobs:
       # jamais supposer qu'une étape retrouve l'environnement d'origine.
       #
       # Décision D3 du Directeur général, 2026-10-09 (audit GitHub, écart B3) :
-      # gitleaks sur l'arbre du dépôt, BLOQUANT quel que soit `mode` (après la
+      # gitleaks sur l'arbre du dépôt (ou, pour une pull request vers une
+      # branche qui n'est pas la branche par défaut, sur le diff de la pull
+      # request, décision du 2026-11-05), BLOQUANT quel que soit `mode` (après la
       # période d'avertissement qui finit le 2026-11-01), sans
       # liste d'exclusion ni fichier .gitleaksignore pris en compte. Il passe
       # avant les autres étapes : licence-scan installe node_modules dans
@@ -121,11 +161,47 @@ jobs:
           # qui ne relance plus gitleaks : ce scan-ci, sans exclusion, couvre
           # tout ce que le second voyait.
           mkdir -p "$RUNNER_TEMP/gitleaks"
+          # Portée du scan : l'arbre, sauf pour une pull request vers une branche
+          # autre que la branche par défaut, où l'on ne lit que ses commits.
+          # Les deux extrémités viennent du commit de fusion de test que
+          # GitHub a extrait (refs/pull/N/merge) : son premier parent est la
+          # cible TELLE QU'ELLE EST MAINTENANT (`pull_request.base.sha` peut
+          # être périmé), son second parent est la tête de la pull request.
+          # `^1..^2` = les commits de la pull request et rien d'autre.
+          # Syntaxe gitleaks v8.30.1 : `gitleaks git [flags] [repo]` avec
+          # `--log-opts` transmis tel quel à `git log -p -U0` (cmd/git.go et
+          # sources/git.go de la v8.30.1) ; sans plage, gitleaks lirait
+          # `--all`. Le diff se lit donc par une plage de révisions explicite.
+          # Toute condition non remplie (historique tronqué, pas de fusion,
+          # parents ou ancêtre commun introuvables) bascule sur l'arbre : un
+          # contrôle plus large, jamais un contrôle sauté.
+          portee=arbre
+          scan=(dir /src)
+          if [ "$SECRETS_SEULEMENT" = true ]; then
+            raison=""
+            base_sha=$(git rev-parse --verify --quiet 'HEAD^1^{commit}') || base_sha=""
+            tete_sha=$(git rev-parse --verify --quiet 'HEAD^2^{commit}') || tete_sha=""
+            if [ "$(git rev-parse --is-shallow-repository)" != false ]; then
+              raison="historique tronqué"
+            elif [ -z "$base_sha" ] || [ -z "$tete_sha" ]; then
+              raison="commit de fusion ou parents introuvables"
+            elif ! git merge-base "$base_sha" "$tete_sha" > /dev/null 2>&1; then
+              raison="ancêtre commun introuvable"
+            fi
+            if [ -n "$raison" ]; then
+              echo "::warning title=gitleaks::Diff de la pull request vers $CIBLE impossible à établir ($raison) : arbre complet scanné à la place."
+            else
+              portee=diff
+              scan=(git /src "--log-opts=${base_sha}..${tete_sha}")
+              echo "Scan du diff de la pull request : ${base_sha}..${tete_sha}"
+            fi
+          fi
+          echo "portee=$portee" >> "$GITHUB_OUTPUT"
           statut=0
           docker run --rm -v "$PWD":/src:ro -v "$RUNNER_TEMP/gitleaks":/out \
             -e GITLEAKS_CONFIG_TOML=$'[extend]\nuseDefault = true' \
             ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
-            dir /src --redact --no-banner --ignore-gitleaks-allow \
+            "${scan[@]}" --redact --no-banner --ignore-gitleaks-allow \
             --gitleaks-ignore-path /dev/null --exit-code 1 \
             --report-format json --report-path /out/gitleaks.json || statut=$?
           if [ "$ignore_present" = true ]; then
@@ -164,21 +240,21 @@ jobs:
       # `workflow_dispatch` peut encore le passer en observation.
       - name: Vérifier la configuration Sentry
         id: sentry
-        if: always()
+        if: always() && env.SECRETS_SEULEMENT != 'true'
         uses: Baseline-quebec/.github/actions/sentry-config@v2
         with:
           mode: ${{ inputs.mode || 'bloquant' }}
 
       - name: Analyser les dépendances
         id: cve
-        if: always()
+        if: always() && env.SECRETS_SEULEMENT != 'true'
         uses: Baseline-quebec/.github/actions/cve-scan@v2
         with:
           mode: ${{ inputs.mode || 'observation' }}
 
       - name: Analyser les références aux modèles
         id: modeles
-        if: always()
+        if: always() && env.SECRETS_SEULEMENT != 'true'
         uses: Baseline-quebec/tracking-llm-discontinued@main
         with:
           repo-name: ${{ github.repository }}
@@ -188,7 +264,7 @@ jobs:
 
       - name: Analyser les licences
         id: licences
-        if: always()
+        if: always() && env.SECRETS_SEULEMENT != 'true'
         uses: Baseline-quebec/.github/actions/licence-scan@v2
         with:
           mode: ${{ inputs.mode || 'observation' }}
@@ -205,7 +281,7 @@ jobs:
       #   lui passe son rapport.
       - name: Auditer le code
         id: securite
-        if: always()
+        if: always() && env.SECRETS_SEULEMENT != 'true'
         uses: Baseline-quebec/.github/actions/secaudit-code@v2
         with:
           mode: ${{ inputs.mode || 'observation' }}
@@ -215,6 +291,10 @@ jobs:
       # Sans ce recapitulatif, `if: always()` masquerait un echec : le job
       # prendrait la couleur de sa DERNIERE etape. Chaque scan est donc rappele
       # avec son verdict, et le job echoue si l'un d'eux a rougi.
+      #
+      # Une etape qui n'a pas tourne est ecrite « non exécuté », jamais
+      # « skipped » ni « success » : un controle saute ne dit rien du depot, et
+      # ne doit pas se lire comme un depot propre.
       - name: Verdict
         if: always()
         shell: bash
@@ -225,14 +305,37 @@ jobs:
           LICENCES: ${{ steps.licences.outcome }}
           SECURITE: ${{ steps.securite.outcome }}
           SECRETS: ${{ steps.secrets.outcome }}
+          PORTEE: ${{ steps.secrets.outputs.portee }}
+          EVENEMENT: ${{ github.event_name }}
         run: |
+          if [ "$SECRETS_SEULEMENT" = true ]; then
+            mode="PR vers $CIBLE : secrets seulement"
+          elif [ "$EVENEMENT" = pull_request ]; then
+            mode="PR vers la branche par défaut : contrôles complets"
+          else
+            mode="$EVENEMENT : contrôles complets"
+          fi
+          if [ "$PORTEE" = diff ]; then
+            portee="diff de la pull request"
+          else
+            portee="arbre complet"
+            if [ "$SECRETS_SEULEMENT" = true ]; then
+              portee="arbre complet (repli : diff impossible à établir)"
+            fi
+          fi
+          lire() { if [ "$1" = skipped ] || [ -z "$1" ]; then echo "non exécuté"; else echo "$1"; fi; }
+          SENTRY=$(lire "$SENTRY"); CVE=$(lire "$CVE"); MODELES=$(lire "$MODELES")
+          LICENCES=$(lire "$LICENCES"); SECURITE=$(lire "$SECURITE"); SECRETS=$(lire "$SECRETS")
+          echo "Mode                            : $mode"
           echo "Configuration Sentry            : $SENTRY"
           echo "CVE des dépendances verrouillées : $CVE"
           echo "Références aux modèles dépréciés : $MODELES"
           echo "Licences des dépendances        : $LICENCES"
           echo "Secrets, code et configuration  : $SECURITE"
-          echo "Secrets en clair (gitleaks)     : $SECRETS"
+          echo "Secrets en clair (gitleaks)     : $SECRETS ($portee)"
           {
+            echo "### Conformité Baseline : $mode"
+            echo
             echo "| Contrôle | Verdict |"
             echo "|---|---|"
             echo "| Configuration Sentry | $SENTRY |"
@@ -240,7 +343,11 @@ jobs:
             echo "| Références aux modèles dépréciés | $MODELES |"
             echo "| Licences des dépendances | $LICENCES |"
             echo "| Secrets, code et configuration | $SECURITE |"
-            echo "| Secrets en clair (gitleaks, bloquant dès le 2026-11-02) | $SECRETS |"
+            echo "| Secrets en clair (gitleaks, bloquant dès le 2026-11-02) : $portee | $SECRETS |"
+            if [ "$SECRETS_SEULEMENT" = true ]; then
+              echo
+              echo "Les contrôles « non exécuté » ne sont pas passés : ils tournent à la pull request vers la branche par défaut."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           for v in "$SENTRY" "$SECRETS" "$CVE" "$MODELES" "$LICENCES" "$SECURITE"; do
             if [ "$v" = "failure" ]; then
