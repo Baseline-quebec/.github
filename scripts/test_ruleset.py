@@ -298,12 +298,15 @@ def test_creer_actif_a_la_demande() -> None:
     assert json.loads(resultat.stdout)["enforcement"] == "active"
 
 
+@pytest.mark.parametrize("argument", ["secrets", "conformite"])
 @pytest.mark.parametrize("script", ["creer-ruleset.sh", "maj-ruleset.sh"])
-def test_un_argument_inattendu_est_fatal_avant_tout_appel_gh(script: str, tmp_path: Path) -> None:
+def test_un_argument_inattendu_est_fatal_avant_tout_appel_gh(
+    script: str, argument: str, tmp_path: Path
+) -> None:
     """L'ancienne cle (`secrets`, `conformite`) ou une faute de frappe s'arrete
     avant tout `gh api`."""
     env = avec_faux_gh(tmp_path)
-    resultat = lancer(script, "secrets", env=env)
+    resultat = lancer(script, argument, env=env)
     assert resultat.returncode == 2
     assert not (tmp_path / "gh.appele").exists(), "gh a ete appele"
 
@@ -426,7 +429,7 @@ def test_activer_par_defaut_met_en_active(tmp_path: Path) -> None:
     assert "enforcement=active" in put.read_text()
 
 
-@pytest.mark.parametrize("args", [("bidon",), ("active", "secrets"), ("secrets",)])
+@pytest.mark.parametrize("args", [("bidon",), ("active", "secrets"), ("secrets",), ("conformite",)])
 def test_activer_refuse_un_argument_inconnu_avant_tout_appel(
     tmp_path: Path, args: tuple[str, ...]
 ) -> None:

@@ -37,9 +37,13 @@ job prendrait la couleur de sa dernière étape et un échec passerait inaperçu
 
 ### Quand Conformité Baseline est requis
 
-Décision du Directeur général du 2026-11-05. Le ruleset « Conformité Baseline »
-n'impose `conformite.yml` que sur la **branche par défaut** des dépôts, c'est-à-dire
-à la promotion vers la production, et le relance à chaque pull request vers elle.
+Décision du DG (2026-11-05) : contrôles complets seulement avant la branche par
+défaut. Ajustée le même jour par le responsable DevOps : les secrets sont arrêtés
+au pre-commit de chaque dépôt, sans check d'organisation vers `develop`. Trace :
+INTERNE67-2430.
+
+Le ruleset « Conformité Baseline » n'impose `conformite.yml` que sur la
+**branche par défaut** des dépôts, c'est-à-dire à la promotion vers la production, et le relance à chaque pull request vers elle.
 Une pull request vers une autre branche (`develop`) n'a **aucun check
 d'organisation**. Le partage est fait par le **ruleset**, pas par une condition
 dans le workflow : un workflow qui choisit son mode d'après `base_ref` se contourne

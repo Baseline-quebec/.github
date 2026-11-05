@@ -1,7 +1,7 @@
 """`conformite.yml` garde les contrôles complets, sans condition de mode.
 
 Le partage selon la cible de la pull request ne se fait PAS dans ce fichier
-(décision du Directeur général du 2026-11-05 : un choix par `base_ref` dans le
+(décision du 2026-11-05, INTERNE67-2430 : un choix par `base_ref` dans le
 workflow se contourne en reciblant la pull request). Un ruleset impose ce
 workflow sur la branche par défaut seulement ; vers une autre branche, aucun
 check d'organisation (les secrets sont arrêtés au pre-commit). Ces tests gardent

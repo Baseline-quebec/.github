@@ -22,7 +22,12 @@
 # exécutions dans ce dépôt-ci : en exécution imposée, GitHub force ces deux
 # événements et ignore le bloc `on`.
 #
-# QUAND CE WORKFLOW EST REQUIS (décision du Directeur général, 2026-11-05)
+# QUAND CE WORKFLOW EST REQUIS
+#
+# Décision du DG (2026-11-05) : contrôles complets seulement avant la branche par
+# défaut. Ajustée le même jour par le responsable DevOps : les secrets sont
+# arrêtés au pre-commit de chaque dépôt, sans check d'organisation vers
+# `develop`. Trace : INTERNE67-2430.
 #
 # Il n'est requis que sur la BRANCHE PAR DÉFAUT des dépôts, et relancé à chaque
 # pull request vers elle : c'est la promotion vers la production. Une pull

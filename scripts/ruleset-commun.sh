@@ -5,10 +5,12 @@
 #
 # Un seul ruleset, « Conformité Baseline » : il impose conformite.yml (les
 # controles complets, gitleaks sur l'arbre compris) sur la branche par defaut
-# SEULEMENT. Decision du Directeur general du 2026-11-05 : une pull request vers
-# une autre branche (develop) n'a aucun check d'organisation, les secrets etant
-# arretes au pre-commit dans chaque depot ; la promotion vers la branche par
-# defaut est le dernier filet avant la production.
+# SEULEMENT. Decision du DG (2026-11-05) : controles complets seulement avant la
+# branche par defaut. Ajustee le meme jour par le responsable DevOps : les
+# secrets sont arretes au pre-commit de chaque depot, sans check d'organisation
+# vers develop (une pull request vers une autre branche n'en a aucun). La
+# promotion vers la branche par defaut est le dernier filet avant la production.
+# Trace : INTERNE67-2430.
 #
 # La definition vit ici et nulle part ailleurs. Deux copies, une pour la
 # creation et une pour la mise a jour, finiraient par diverger : le ruleset
