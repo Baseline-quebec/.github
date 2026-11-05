@@ -23,10 +23,28 @@
 # événements et ignore le bloc `on`.
 #
 # Ce workflow est requis par un ruleset qui ne vise que la BRANCHE PAR DÉFAUT
-# des dépôts (promotion vers la production). Les pull requests vers les autres
-# branches ne passent que par `secrets.yml` (« Secrets Baseline » : le scan des
-# secrets seul, sur le diff). Le choix se fait donc par le ruleset et non dans
-# ce fichier : recibler une pull request ne peut contourner aucun contrôle.
+# des dépôts (promotion vers la production). Les pull requests vers `develop` ne
+# passent que par `secrets.yml` (« Secrets Baseline » : le scan des secrets seul,
+# sur le diff). Le choix se fait donc par le ruleset et non dans ce fichier :
+# recibler une pull request ne peut contourner aucun contrôle.
+#
+# APRÈS LA FUSION SUR DEVELOP (workflow_call)
+#
+# Décision du 2026-11-05 : « Conformité Baseline » tourne aussi après la fusion
+# sur `develop`, comme SIGNAL (un `push` n'empêche aucune fusion ; un échec rend
+# seulement le run rouge). Chaque dépôt ajoute un petit workflow qui appelle
+# celui-ci (`conformite-develop.yml`, exemple dans le README). En `workflow_call`,
+# le contexte `github` est celui de l'APPELANT : `actions/checkout` sans
+# `repository` extrait donc le dépôt appelant, `github.repository` désigne le
+# dépôt appelant (le garde ci-dessous reste valable) et `vars` est celui de
+# l'appelant. Les `uses: Baseline-quebec/.github/actions/...@v2` se résolvent
+# normalement. Les permissions viennent de l'appelant, qui doit accorder
+# `contents: read` et `issues: write` : un workflow appelé ne peut pas en obtenir
+# plus. L'appelant passe ses secrets par `secrets: inherit`. En `push`, il n'y a
+# ni fusion de test ni pull request : gitleaks lit l'arbre complet et semgrep
+# retombe sur l'analyse complète (`base-semgrep` ne vaut `fusion` que sur
+# `pull_request`). Le bloc `on` est ignoré en exécution imposée, donc le rôle de
+# check requis sur la branche par défaut ne change pas.
 #
 # Pour modifier une politique, éditer actions/<scan>/politique.yaml puis
 # déplacer le tag majeur courant (v2) : les dépôts suivent sans aucune
@@ -39,6 +57,12 @@ name: Conformité Baseline
 on:
   pull_request:
   merge_group:
+  # Appelable par un autre dépôt (voir « APRÈS LA FUSION SUR DEVELOP »). Aucune
+  # entrée obligatoire ; le secret est facultatif. Ignoré en exécution imposée.
+  workflow_call:
+    secrets:
+      LLM_SCAN_WEBHOOK_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       mode:

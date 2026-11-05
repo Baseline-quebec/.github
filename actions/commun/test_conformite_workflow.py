@@ -70,3 +70,29 @@ def test_gitleaks_complet_lit_l_arbre() -> None:
 def test_le_verdict_tourne_toujours() -> None:
     verdict = next(e for e in job()["steps"] if e.get("name") == "Verdict")
     assert verdict["if"] == "always()"
+
+
+def declencheurs() -> dict[str, Any]:
+    """Le bloc `on` : PyYAML lit la clé `on` comme le booléen True."""
+    flux = charger()
+    return flux["on"] if "on" in flux else flux[True]
+
+
+def test_le_workflow_est_appelable_par_un_autre_depot() -> None:
+    """Pour tourner après la fusion sur develop, depuis un workflow de chaque
+    dépôt. Le bloc `on` est ignoré en exécution imposée : le rôle de check requis
+    ne change pas."""
+    on = declencheurs()
+    assert "workflow_call" in on
+    appel = on["workflow_call"] or {}
+    # Aucune entrée obligatoire, et le secret du webhook est facultatif.
+    assert not [n for n, e in (appel.get("inputs") or {}).items() if e.get("required")]
+    secrets = appel.get("secrets") or {}
+    assert not [n for n, e in secrets.items() if e.get("required")]
+    # Les déclencheurs d'origine restent là.
+    assert {"pull_request", "merge_group", "workflow_dispatch"} <= set(on)
+
+
+def test_le_nom_du_job_est_inchange_avec_workflow_call() -> None:
+    assert job()["name"] == "Conformité Baseline"
+    assert job()["if"] == "github.repository != 'Baseline-quebec/.github'"

@@ -107,7 +107,9 @@ src="${4%:/src:ro}"
   echo "@@APPEL"
   printf "%s\n" "$@"
   echo "@@FICHIERS"
-  (cd "$src" && find . -path ./.git -prune -o -type f -print | sort)
+  # Noms séparés par NUL, puis NUL -> saut de ligne et saut de ligne -> \001 : un
+  # nom contenant un saut de ligne reste sur une seule ligne du journal.
+  (cd "$src" && find . -path ./.git -prune -o -type f -print0 | sort -z | tr '\n\0' '\001\n')
   echo "@@FIN"
 } >> "$journal"
 statuts=(${FAKE_STATUTS:-0 0 0})
@@ -186,7 +188,9 @@ class Appel:
         args, fichiers = brut.split("@@FICHIERS\n")
         self.args = args.splitlines()
         self.texte = args
-        self.fichiers = sorted(f[2:] for f in fichiers.splitlines() if f.startswith("./"))
+        self.fichiers = sorted(
+            f[2:].replace("\x01", "\n") for f in fichiers.splitlines() if f.startswith("./")
+        )
 
     def commande(self) -> str:
         """Le verbe gitleaks (`dir` ou `git`) qui précède la source `/src`."""
@@ -319,6 +323,24 @@ def test_le_gitleaksignore_de_la_pr_n_est_jamais_copie(tmp_path: Path) -> None:
     assert "impossible à établir" not in resultat.stdout
     # Retiré pour le scan puis remis dans l'espace de travail.
     assert (depot / ".gitleaksignore").exists()
+
+
+def test_noms_de_fichiers_hostiles_sont_copies_tels_quels(tmp_path: Path) -> None:
+    """Tiret initial, barre oblique inverse, saut de ligne, espaces : tar lit la
+    liste à la lettre (`--no-unquote --verbatim-files-from`), sans l'interpréter
+    ni la prendre pour des options."""
+    noms = ["-tiret.txt", "anti\\slash.txt", "ligne\nbreak.txt", "avec  espaces.txt", "-C"]
+    depot, _, _ = construire_depot(tmp_path, {n: b"x\n" for n in noms})
+    resultat, appels, sortie = lancer_gitleaks(depot, tmp_path)
+    assert resultat.returncode == 0, resultat.stderr
+    assert appels[0].fichiers == sorted(noms)
+    assert "portee=diff" in sortie
+
+
+def test_tar_lit_la_liste_a_la_lettre() -> None:
+    script = etape("secrets")["run"]
+    assert "--no-unquote" in script
+    assert "--verbatim-files-from" in script
 
 
 def test_les_fichiers_supprimes_ne_sont_pas_demandes_a_tar(tmp_path: Path) -> None:

@@ -41,7 +41,7 @@ if [ -z "$cle" ]; then
 fi
 nom=$(nom_ruleset "$cle")
 
-identifiant=$(gh api "orgs/${ORG}/rulesets" --jq ".[] | select(.name == \"${nom}\") | .id")
+identifiant=$(gh api "orgs/${ORG}/rulesets" --paginate --jq ".[] | select(.name == \"${nom}\") | .id")
 
 if [ -z "$identifiant" ]; then
   echo "Ruleset « ${nom} » introuvable. Lancer d'abord ./scripts/creer-ruleset.sh ${cle}" >&2
@@ -51,10 +51,15 @@ fi
 vivant=$(gh api "orgs/${ORG}/rulesets/${identifiant}")
 actuel=$(jq -c '[.rules[] | select(.type == "workflows") | .parameters.workflows[].path] | sort' <<<"$vivant")
 vise=$(regles_workflows "$cle" | jq -c '[.[0].parameters.workflows[].path] | sort')
+# `do_not_enforce_on_create` fait partie de ce qui est declare : un ruleset dont
+# le parametre a ete perdu doit etre remis, sans toucher aux autres regles.
+dne_actuel=$(jq -c '[.rules[] | select(.type == "workflows") | .parameters.do_not_enforce_on_create // false] | first // false' <<<"$vivant")
+dne_vise=$(regles_workflows "$cle" | jq -c '.[0].parameters.do_not_enforce_on_create')
 
 echo "Ruleset ${identifiant} « ${nom} »"
 echo "  workflows actuels : $actuel"
 echo "  workflows visés   : $vise"
+echo "  do_not_enforce_on_create : actuel $dne_actuel, visé $dne_vise"
 
 # Si le perimetre reel a diverge de ce que ce depot declare, alors
 # creer-ruleset.sh reconstruirait un ruleset FAUX apres un incident. Le dire
@@ -91,7 +96,7 @@ if [ "$conditions_a_changer" = true ] && [ "${AVEC_CONDITIONS:-0}" != "1" ]; the
 fi
 
 regles_a_changer=false
-[ "$actuel" = "$vise" ] || regles_a_changer=true
+[ "$actuel" = "$vise" ] && [ "$dne_actuel" = "$dne_vise" ] || regles_a_changer=true
 
 if [ "$regles_a_changer" = false ] && [ "$conditions_a_changer" = false ]; then
   echo "Rien a changer."
@@ -113,13 +118,27 @@ while IFS= read -r chemin; do
   fi
 done < <(workflows_ruleset "$cle")
 
-# Corps du PUT : `rules` toujours, `conditions` seulement si demande ET different.
-# Les champs omis d'un PUT de ruleset sont laisses tels quels par GitHub : le
-# mode d'application n'est jamais envoye.
-corps=$(jq -nc --argjson rules "$(regles_workflows "$cle")" '{rules: $rules}')
+# Corps du PUT, construit pour ne rien perdre. Un PUT de `rules` REMPLACE tout le
+# tableau : renvoyer seulement la regle `workflows` effacerait les autres regles
+# vivantes (pull_request, statuts) et ses autres parametres. `rules` n'est donc
+# envoye que si elles changent vraiment, et part alors des regles VIVANTES dont
+# seuls `workflows` et `do_not_enforce_on_create` de la regle `workflows` sont
+# remplaces (ajoutee si elle manquait). `conditions` n'est envoye que si demande
+# ET different, a partir des conditions vivantes dont seul `ref_name.include`
+# change : les exclusions reelles survivent. Le mode d'application n'est jamais
+# envoye (les champs omis d'un PUT de ruleset sont laisses tels quels).
+corps='{}'
+if [ "$regles_a_changer" = true ]; then
+  parametres=$(regles_workflows "$cle" | jq -c '.[0].parameters')
+  regles=$(jq -c --argjson p "$parametres" '
+    .rules
+    | if any(.[]; .type == "workflows")
+      then map(if .type == "workflows" then .parameters = ((.parameters // {}) + $p) else . end)
+      else . + [{type: "workflows", parameters: $p}]
+      end' <<<"$vivant")
+  corps=$(jq -c --argjson r "$regles" '. + {rules: $r}' <<<"$corps")
+fi
 if [ "$conditions_a_changer" = true ]; then
-  # Les conditions VIVANTES, dont seul `ref_name.include` est remplace : les
-  # exclusions de depots reelles survivent meme si elles divergent du depot.
   conditions=$(jq -c --argjson b "$branches_declarees" \
     '.conditions | .ref_name.include = $b' <<<"$vivant")
   corps=$(jq -c --argjson c "$conditions" '. + {conditions: $c}' <<<"$corps")
@@ -133,7 +152,7 @@ fi
 echo "Mise a jour..."
 echo "$corps" |
   gh api -X PUT "orgs/${ORG}/rulesets/${identifiant}" --input - \
-    --jq '{id, name, enforcement, branches: .conditions.ref_name.include, workflows: [.rules[] | select(.type == "workflows") | .parameters.workflows[].path]}'
+    --jq '{id, name, enforcement, branches: .conditions.ref_name.include, regles: [.rules[].type], workflows: [.rules[] | select(.type == "workflows") | .parameters.workflows[].path]}'
 
 echo
 echo "Fait. Les controles s'executent selon la nouvelle definition sur les pull"

@@ -43,7 +43,7 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
   exit 0
 fi
 
-existant=$(gh api "orgs/${ORG}/rulesets" --jq ".[] | select(.name == \"${nom}\") | .id")
+existant=$(gh api "orgs/${ORG}/rulesets" --paginate --jq ".[] | select(.name == \"${nom}\") | .id")
 if [ -n "$existant" ]; then
   echo "Le ruleset « ${nom} » existe déjà (id ${existant}) : rien créé."
   echo "Pour le modifier : ./scripts/maj-ruleset.sh ${cle}"
@@ -73,7 +73,7 @@ fi
 echo "Vérifier les exécutions dans quelques jours :"
 echo "  gh api orgs/${ORG}/rulesets --jq '.[] | {id, name, enforcement}'"
 echo
-echo "Rappel : la règle « workflows » n'écoute que pull_request et merge_group."
-echo "Un push direct vers la branche par défaut n'est jamais analysé. Pour"
-echo "couvrir ce cas, ajouter la règle pull_request au même ruleset :"
-echo "  (deja couvert chez Baseline par un ruleset org existant)"
+echo "Rappel : la règle « workflows » BLOQUE les pushs directs sur les branches"
+echo "qu'elle cible (doc GitHub, « Require workflows to pass before merging »)."
+echo "Ne la viser que sur des branches alimentées par pull request seulement,"
+echo "jamais sur toutes les branches. Elle écoute pull_request et merge_group."

@@ -99,9 +99,21 @@ def test_le_ruleset_de_conformite_ne_vise_que_la_branche_par_defaut() -> None:
     assert "refs/heads/develop" not in include
 
 
-def test_le_ruleset_des_secrets_vise_toutes_les_branches() -> None:
-    assert branches("secrets") == ["~ALL"]
-    assert appeler("conditions_ruleset secrets")["ref_name"]["include"] == ["~ALL"]
+def test_le_ruleset_des_secrets_vise_develop_et_jamais_toutes_les_branches() -> None:
+    """La regle « Require workflows » bloque les pushs directs sur les branches
+    ciblees (doc GitHub) : sur `~ALL` elle bloquerait tout push de branche de
+    feature, dependabot, « Update branch » et « Resolve conflicts »."""
+    assert branches("secrets") == ["refs/heads/develop"]
+    include = appeler("conditions_ruleset secrets")["ref_name"]["include"]
+    assert include == ["refs/heads/develop"]
+    assert "~ALL" not in include
+
+
+@pytest.mark.parametrize("cle", CLES)
+def test_la_creation_de_branche_n_est_pas_bloquee(cle: str) -> None:
+    """`do_not_enforce_on_create` : valide pour la regle `workflows` de l'API."""
+    regle = appeler(f"regles_workflows {cle}")[0]
+    assert regle["parameters"]["do_not_enforce_on_create"] is True
 
 
 @pytest.mark.parametrize("cle", CLES)
@@ -316,8 +328,9 @@ def test_creer_actif_a_la_demande() -> None:
 FAUX_GH = """#!/bin/bash
 case "$*" in
   *"contents/"*) exit 0 ;;
-  "api orgs/Baseline-quebec/rulesets --jq"*) echo 42 ;;
+  "api orgs/Baseline-quebec/rulesets --paginate --jq"*) echo 42 ;;
   "api orgs/Baseline-quebec/rulesets/42") cat "$FAKE_VIVANT" ;;
+  "api -X PUT"*) echo "$*" >> "$FAKE_PUT"; echo "{}" ;;
   *) echo "appel inattendu : $*" >&2; exit 9 ;;
 esac
 """
@@ -353,6 +366,7 @@ def lancer_maj(
         env={
             "PATH": f"{faux}:{os.environ['PATH']}",
             "FAKE_VIVANT": str(fichier),
+            "FAKE_PUT": str(tmp_path / "put"),
             "DRY_RUN": "1",
             **env,
         },
@@ -368,6 +382,9 @@ def test_maj_restreint_conformite_a_la_branche_par_defaut_sur_demande(tmp_path: 
     # Les exclusions reelles survivent, meme celle que le depot ne declare pas.
     assert "depot-exclu-a-la-main" in corps["conditions"]["repository_name"]["exclude"]
     assert "enforcement" not in corps
+    # Les regles sont deja conformes : elles ne sont pas renvoyees (un PUT de
+    # `rules` remplace tout le tableau).
+    assert "rules" not in corps
 
 
 def test_maj_sans_drapeau_signale_la_derive_sans_rien_envoyer(tmp_path: Path) -> None:
@@ -384,3 +401,118 @@ def test_maj_est_idempotente(tmp_path: Path) -> None:
     resultat = lancer_maj(tmp_path, vivant, AVEC_CONDITIONS="1")
     assert resultat.returncode == 0, resultat.stderr
     assert "Rien a changer." in resultat.stdout
+
+
+@pytest.mark.parametrize("fonction", ["regles_workflows", "conditions_ruleset", "charge_ruleset"])
+def test_une_cle_inconnue_fait_sortir_chaque_fonction_publique(fonction: str) -> None:
+    """Une erreur dans `$(...)` resterait confinee : chaque fonction valide la
+    cle en tete et sort en erreur."""
+    resultat = subprocess.run(
+        ["bash", "-c", f'source "{COMMUN}" && {fonction} inconnu'],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert resultat.returncode != 0
+    assert resultat.stdout == ""
+
+
+@pytest.mark.parametrize("script", ["creer-ruleset.sh", "maj-ruleset.sh", "activer-ruleset.sh"])
+def test_une_cle_inconnue_n_appelle_jamais_gh(script: str, tmp_path: Path) -> None:
+    """Une cle mal tapee dans un script qui ecrit dans l'organisation s'arrete
+    avant tout appel `gh api`."""
+    faux = tmp_path / "bin"
+    faux.mkdir()
+    marque = tmp_path / "gh.appele"
+    gh = faux / "gh"
+    gh.write_text(f'#!/bin/bash\necho "$@" >> "{marque}"\nexit 0\n')
+    gh.chmod(0o755)
+    resultat = lancer(script, "inconnu", env={"PATH": f"{faux}:{os.environ['PATH']}"})
+    assert resultat.returncode != 0
+    assert "Ruleset inconnu" in resultat.stderr
+    assert not marque.exists(), "gh a ete appele malgre une cle inconnue"
+
+
+AUTRE_REGLE = {"type": "pull_request", "parameters": {"required_approving_review_count": 1}}
+
+
+def test_maj_des_regles_conserve_les_autres_regles_et_parametres(tmp_path: Path) -> None:
+    """Un PUT de `rules` remplace tout le tableau : les autres regles vivantes et
+    les parametres inconnus de la regle `workflows` doivent survivre."""
+    vivant = vivant_conformite(["~DEFAULT_BRANCH"])
+    vieux = {"repository_id": 1, "path": ".github/workflows/vieux.yml", "ref": "x"}
+    vivant["rules"] = [
+        AUTRE_REGLE,
+        {"type": "workflows", "parameters": {"workflows": [vieux], "parametre_inconnu": 7}},
+    ]
+    resultat = lancer_maj(tmp_path, vivant)
+    assert resultat.returncode == 0, resultat.stderr
+    corps = json.loads(resultat.stdout[resultat.stdout.index("{") :])
+    assert "conditions" not in corps
+    assert corps["rules"][0] == AUTRE_REGLE
+    workflows_regle = corps["rules"][1]["parameters"]
+    assert workflows_regle["parametre_inconnu"] == 7
+    assert workflows_regle["do_not_enforce_on_create"] is True
+    assert [w["path"] for w in workflows_regle["workflows"]] == workflows("conformite")
+
+
+def test_maj_remet_do_not_enforce_on_create_perdu(tmp_path: Path) -> None:
+    vivant = vivant_conformite(["~DEFAULT_BRANCH"])
+    parametres = vivant["rules"][0]["parameters"]
+    del parametres["do_not_enforce_on_create"]
+    vivant["rules"].append(AUTRE_REGLE)
+    resultat = lancer_maj(tmp_path, vivant)
+    assert resultat.returncode == 0, resultat.stderr
+    corps = json.loads(resultat.stdout[resultat.stdout.index("{") :])
+    assert corps["rules"][0]["parameters"]["do_not_enforce_on_create"] is True
+    assert AUTRE_REGLE in corps["rules"]
+
+
+def test_maj_ajoute_la_regle_workflows_si_elle_manquait(tmp_path: Path) -> None:
+    vivant = vivant_conformite(["~DEFAULT_BRANCH"])
+    vivant["rules"] = [AUTRE_REGLE]
+    resultat = lancer_maj(tmp_path, vivant)
+    corps = json.loads(resultat.stdout[resultat.stdout.index("{") :])
+    assert corps["rules"][0] == AUTRE_REGLE
+    assert corps["rules"][1]["type"] == "workflows"
+
+
+def lancer_activer(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+    faux = tmp_path / "bin"
+    faux.mkdir()
+    gh = faux / "gh"
+    gh.write_text(FAUX_GH)
+    gh.chmod(0o755)
+    put = tmp_path / "put"
+    resultat = lancer(
+        "activer-ruleset.sh",
+        *args,
+        env={"PATH": f"{faux}:{os.environ['PATH']}", "FAKE_PUT": str(put)},
+    )
+    return resultat, put
+
+
+def test_activer_retour_arriere_en_disabled(tmp_path: Path) -> None:
+    resultat, put = lancer_activer(tmp_path, "secrets", "disabled")
+    assert resultat.returncode == 0, resultat.stderr
+    assert "enforcement=disabled" in put.read_text()
+
+
+def test_activer_par_defaut_met_en_active(tmp_path: Path) -> None:
+    resultat, put = lancer_activer(tmp_path, "secrets")
+    assert resultat.returncode == 0, resultat.stderr
+    assert "enforcement=active" in put.read_text()
+
+
+def test_activer_refuse_un_mode_inconnu_avant_tout_appel(tmp_path: Path) -> None:
+    resultat, put = lancer_activer(tmp_path, "secrets", "bidon")
+    assert resultat.returncode == 2
+    assert not put.exists()
+
+
+@pytest.mark.parametrize("script", ["creer-ruleset.sh", "maj-ruleset.sh", "activer-ruleset.sh"])
+def test_les_listes_de_rulesets_sont_paginees(script: str) -> None:
+    """Au-dela de 30 rulesets, la premiere page ne montre pas tout : un ruleset
+    existant paraitrait absent."""
+    contenu = (SCRIPTS / script).read_text(encoding="utf-8")
+    assert 'gh api "orgs/${ORG}/rulesets" --paginate' in contenu
