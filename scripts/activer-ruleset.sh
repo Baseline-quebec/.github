@@ -7,26 +7,25 @@
 # C'est ce qui MET EN SERVICE le scan, pas ce qui le rend bloquant : en mode
 # evaluate GitHub journalise la règle sans exécuter les workflows, donc rien ne
 # tourne. Le blocage, lui, dépend de l'entrée `mode` de l'action, qui vaut
-# `observation` par défaut, ou du workflow lui-même (secrets.yml est bloquant).
+# `observation` par défaut, ou de l'étape elle-même.
 #
 # Prérequis : scope admin:org.
 #
 # Usage :
-#   ./scripts/activer-ruleset.sh <conformite|secrets>             # active
-#   ./scripts/activer-ruleset.sh <conformite|secrets> disabled    # retour arrière
+#   ./scripts/activer-ruleset.sh             # active
+#   ./scripts/activer-ruleset.sh disabled    # retour arrière
 
 set -euo pipefail
 
 # shellcheck source=scripts/ruleset-commun.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ruleset-commun.sh"
 
-cle="${1:-}"
-if [ -z "$cle" ]; then
-  echo "Usage : $0 <conformite|secrets>" >&2
+nom="$NOM_RULESET"
+mode="${1:-active}"
+if [ "$#" -gt 1 ]; then
+  echo "Usage : $0 [active|evaluate|disabled]" >&2
   exit 2
 fi
-nom=$(nom_ruleset "$cle")
-mode="${2:-active}"
 case "$mode" in
   active | evaluate | disabled) ;;
   *)
@@ -38,7 +37,7 @@ esac
 identifiant=$(gh api "orgs/${ORG}/rulesets" --paginate --jq ".[] | select(.name == \"${nom}\") | .id")
 
 if [ -z "$identifiant" ]; then
-  echo "Ruleset « ${nom} » introuvable. Lancer d'abord ./scripts/creer-ruleset.sh ${cle}" >&2
+  echo "Ruleset « ${nom} » introuvable. Lancer d'abord ./scripts/creer-ruleset.sh" >&2
   exit 1
 fi
 

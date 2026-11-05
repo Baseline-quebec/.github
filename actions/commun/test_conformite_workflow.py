@@ -1,12 +1,12 @@
 """`conformite.yml` garde les contrôles complets, sans condition de mode.
 
 Le partage selon la cible de la pull request ne se fait PAS dans ce fichier
-(décision du Directeur général du 2026-11-05, refaite après la revue : un choix
-par `base_ref` dans le workflow se contourne en reciblant la pull request).
-Deux rulesets imposent deux workflows : `secrets.yml` sur toutes les branches,
-celui-ci sur la branche par défaut seulement. Ces tests gardent donc ce qui doit
-rester vrai ici : le nom que les rulesets exigent, un seul job, et aucune
-logique de mode qui allégerait un contrôle.
+(décision du Directeur général du 2026-11-05 : un choix par `base_ref` dans le
+workflow se contourne en reciblant la pull request). Un ruleset impose ce
+workflow sur la branche par défaut seulement ; vers une autre branche, aucun
+check d'organisation (les secrets sont arrêtés au pre-commit). Ces tests gardent
+donc ce qui doit rester vrai ici : le nom que le ruleset exige, un seul job, et
+aucune logique de mode qui allégerait un contrôle, gitleaks sur l'arbre compris.
 """
 
 from __future__ import annotations
@@ -96,3 +96,11 @@ def test_le_workflow_est_appelable_par_un_autre_depot() -> None:
 def test_le_nom_du_job_est_inchange_avec_workflow_call() -> None:
     assert job()["name"] == "Conformité Baseline"
     assert job()["if"] == "github.repository != 'Baseline-quebec/.github'"
+
+
+def test_plus_de_workflow_secrets_ni_de_mention_dans_conformite() -> None:
+    """« Secrets Baseline » est retiré : un seul workflow est imposé."""
+    assert not (RACINE / ".github/workflows/secrets.yml").exists()
+    texte = WORKFLOW.read_text(encoding="utf-8")
+    assert "Secrets Baseline" not in texte
+    assert "secrets.yml" not in texte

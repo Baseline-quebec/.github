@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 #
-# Crée un ruleset organisationnel qui impose un workflow de conformité à tous
-# les dépôts de Baseline-quebec. Deux rulesets existent (voir ruleset-commun.sh) :
-#   conformite : « Conformité Baseline », conformite.yml, branche par défaut ;
-#   secrets    : « Secrets Baseline », secrets.yml, toutes les branches.
+# Crée le ruleset organisationnel « Conformité Baseline » : il impose
+# conformite.yml à tous les dépôts de Baseline-quebec, sur la branche par défaut
+# seulement (voir ruleset-commun.sh).
 #
 # Prérequis : un jeton avec le scope admin:org.
 #   gh auth refresh -h github.com -s admin:org
@@ -21,22 +20,23 @@
 # check échouerait sur toutes les pull requests de l'organisation.
 #
 # Usage :
-#   ./scripts/creer-ruleset.sh secrets                     # crée en mode evaluate
-#   ENFORCEMENT=active ./scripts/creer-ruleset.sh secrets  # crée actif
-#   DRY_RUN=1 ./scripts/creer-ruleset.sh secrets           # affiche sans créer
+#   ./scripts/creer-ruleset.sh                     # crée en mode evaluate
+#   ENFORCEMENT=active ./scripts/creer-ruleset.sh  # crée actif
+#   DRY_RUN=1 ./scripts/creer-ruleset.sh           # affiche sans créer
 
 set -euo pipefail
 
 # shellcheck source=scripts/ruleset-commun.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ruleset-commun.sh"
 
-cle="${1:-}"
-if [ -z "$cle" ]; then
-  echo "Usage : $0 <conformite|secrets>" >&2
+# Aucun argument : il n'existe plus qu'un ruleset. Un argument (par exemple
+# l'ancienne clé « secrets ») est une erreur, avant tout appel gh.
+if [ "$#" -ne 0 ]; then
+  echo "Usage : $0 (aucun argument, un seul ruleset : « ${NOM_RULESET} »)" >&2
   exit 2
 fi
-nom=$(nom_ruleset "$cle")
-charge_utile=$(charge_ruleset "$cle" "${ENFORCEMENT:-evaluate}")
+nom="$NOM_RULESET"
+charge_utile=$(charge_ruleset "${ENFORCEMENT:-evaluate}")
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
   echo "$charge_utile" | jq '.'
@@ -46,7 +46,7 @@ fi
 existant=$(gh api "orgs/${ORG}/rulesets" --paginate --jq ".[] | select(.name == \"${nom}\") | .id")
 if [ -n "$existant" ]; then
   echo "Le ruleset « ${nom} » existe déjà (id ${existant}) : rien créé."
-  echo "Pour le modifier : ./scripts/maj-ruleset.sh ${cle}"
+  echo "Pour le modifier : ./scripts/maj-ruleset.sh"
   exit 0
 fi
 
@@ -58,7 +58,7 @@ while IFS= read -r chemin; do
     echo "  git tag -f ${tag} && git push -f origin ${tag}" >&2
     exit 1
   fi
-done < <(workflows_ruleset "$cle")
+done < <(printf '%s\n' "${WORKFLOWS[@]}")
 
 echo "Création du ruleset « ${nom} » sur ${ORG} (${ENFORCEMENT:-evaluate})..."
 echo "$charge_utile" | gh api -X POST "orgs/${ORG}/rulesets" --input - --jq '{id, name, enforcement}'
@@ -66,7 +66,7 @@ echo "$charge_utile" | gh api -X POST "orgs/${ORG}/rulesets" --input - --jq '{id
 echo
 if [ "${ENFORCEMENT:-evaluate}" = "evaluate" ]; then
   echo "Fait. Attention : en mode evaluate le scan ne s'execute PAS du tout."
-  echo "Lancer ./scripts/activer-ruleset.sh ${cle} pour qu'il tourne."
+  echo "Lancer ./scripts/activer-ruleset.sh pour qu'il tourne."
 else
   echo "Fait. Le ruleset est actif."
 fi

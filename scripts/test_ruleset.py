@@ -24,7 +24,6 @@ import pytest
 COMMUN = Path(__file__).parent / "ruleset-commun.sh"
 SCRIPTS = Path(__file__).parent
 RACINE = SCRIPTS.parent
-CLES = ("conformite", "secrets")
 
 
 def appeler(fonction: str) -> dict[str, Any] | list[dict[str, Any]]:
@@ -75,90 +74,63 @@ def test_exclusions_connues_sont_declarees() -> None:
     }
 
 
-def branches(cle: str) -> list[str]:
-    return variable(f"BRANCHES_{cle.upper()}")
+def test_un_seul_ruleset_aux_noms_exacts() -> None:
+    """Le nom sert de clef de recherche a maj et activer : un renommage
+    silencieux ferait croire que le ruleset n'existe pas."""
+    assert appeler("charge_ruleset")["name"] == "Conformité Baseline"
 
 
-def workflows(cle: str) -> list[str]:
-    return variable(f"WORKFLOWS_{cle.upper()}")
-
-
-def test_deux_rulesets_aux_noms_exacts() -> None:
-    """Les noms servent de clef de recherche a maj et activer : un renommage
-    silencieux ferait croire qu'un ruleset n'existe pas."""
-    assert appeler("charge_ruleset conformite")["name"] == "Conformité Baseline"
-    assert appeler("charge_ruleset secrets")["name"] == "Secrets Baseline"
-
-
-def test_le_ruleset_de_conformite_ne_vise_que_la_branche_par_defaut() -> None:
-    """`develop` est couvert par « Secrets Baseline » : les controles complets
-    ne sont plus rejoues a chaque pull request vers une branche d'integration."""
-    assert branches("conformite") == ["~DEFAULT_BRANCH"]
-    include = appeler("conditions_ruleset conformite")["ref_name"]["include"]
+def test_le_ruleset_ne_vise_que_la_branche_par_defaut() -> None:
+    """Decision du 2026-11-05 : plus de check d'organisation vers `develop`, la
+    promotion vers la branche par defaut est le dernier filet. Jamais `~ALL` :
+    la regle « Require workflows » bloque les pushs directs sur les branches
+    ciblees (doc GitHub)."""
+    assert variable("BRANCHES") == ["~DEFAULT_BRANCH"]
+    include = appeler("conditions_ruleset")["ref_name"]["include"]
     assert include == ["~DEFAULT_BRANCH"]
     assert "refs/heads/develop" not in include
-
-
-def test_le_ruleset_des_secrets_vise_develop_et_jamais_toutes_les_branches() -> None:
-    """La regle « Require workflows » bloque les pushs directs sur les branches
-    ciblees (doc GitHub) : sur `~ALL` elle bloquerait tout push de branche de
-    feature, dependabot, « Update branch » et « Resolve conflicts »."""
-    assert branches("secrets") == ["refs/heads/develop"]
-    include = appeler("conditions_ruleset secrets")["ref_name"]["include"]
-    assert include == ["refs/heads/develop"]
     assert "~ALL" not in include
 
 
-@pytest.mark.parametrize("cle", CLES)
-def test_la_creation_de_branche_n_est_pas_bloquee(cle: str) -> None:
+def test_la_creation_de_branche_n_est_pas_bloquee() -> None:
     """`do_not_enforce_on_create` : valide pour la regle `workflows` de l'API."""
-    regle = appeler(f"regles_workflows {cle}")[0]
+    regle = appeler("regles_workflows")[0]
     assert regle["parameters"]["do_not_enforce_on_create"] is True
 
 
-@pytest.mark.parametrize("cle", CLES)
-def test_les_deux_rulesets_couvrent_tous_les_depots_sauf_les_memes_exclusions(
-    cle: str,
-) -> None:
-    conditions = appeler(f"conditions_ruleset {cle}")
+def test_le_ruleset_couvre_tous_les_depots_sauf_les_exclusions() -> None:
+    conditions = appeler("conditions_ruleset")
     assert conditions["repository_name"]["include"] == ["~ALL"]
     assert sorted(conditions["repository_name"]["exclude"]) == sorted(variable("EXCLUS"))
 
 
-@pytest.mark.parametrize("cle", CLES)
-def test_chaque_branche_declaree_arrive_dans_les_conditions(cle: str) -> None:
+def test_chaque_branche_declaree_arrive_dans_les_conditions() -> None:
     """Meme garde que pour EXCLUS : une branche nommee dans BRANCHES et absente
     des conditions ferait croire un scan actif la ou il n'y en a pas."""
-    conditions = appeler(f"conditions_ruleset {cle}")
-    assert sorted(conditions["ref_name"]["include"]) == sorted(branches(cle))
+    conditions = appeler("conditions_ruleset")
+    assert sorted(conditions["ref_name"]["include"]) == sorted(variable("BRANCHES"))
 
 
-def test_une_cle_inconnue_est_une_erreur() -> None:
-    resultat = subprocess.run(
-        ["bash", "-c", f'source "{COMMUN}" && charge_ruleset inconnu'],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert resultat.returncode != 0
-    assert "Ruleset inconnu" in resultat.stderr
+def test_plus_aucune_trace_de_secrets_baseline() -> None:
+    """Decision du 2026-11-05 : « Secrets Baseline » est retire (les secrets sont
+    arretes au pre-commit)."""
+    assert not (RACINE / ".github/workflows/secrets.yml").exists()
+    contenu = COMMUN.read_text(encoding="utf-8")
+    assert "Secrets Baseline" not in contenu
+    assert "WORKFLOWS_SECRETS" not in contenu
+    assert "BRANCHES_SECRETS" not in contenu
 
 
 # --------------------------------------------------------------------------
-# Workflows imposés
+# Workflow imposé
 # --------------------------------------------------------------------------
 
 
-def chemins_imposes(cle: str) -> list[str]:
-    regles = appeler(f"regles_workflows {cle}")
-    return [w["path"] for w in regles[0]["parameters"]["workflows"]]
-
-
-def test_chaque_ruleset_impose_son_workflow_et_lui_seul() -> None:
-    """Un job par workflow : conformite.yml porte les controles complets,
-    secrets.yml le scan des secrets seul."""
-    assert chemins_imposes("conformite") == [".github/workflows/conformite.yml"]
-    assert chemins_imposes("secrets") == [".github/workflows/secrets.yml"]
+def test_le_workflow_impose_est_conformite_et_lui_seul() -> None:
+    """Un job : conformite.yml porte les controles complets."""
+    regles = appeler("regles_workflows")
+    chemins = [w["path"] for w in regles[0]["parameters"]["workflows"]]
+    assert chemins == [".github/workflows/conformite.yml"]
 
 
 def test_les_quatre_controles_sont_toujours_la() -> None:
@@ -168,7 +140,7 @@ def test_les_quatre_controles_sont_toujours_la() -> None:
     controle en chemin. C'est ici, dans les etapes du workflow impose, que se
     lit ce qui est reellement execute.
     """
-    impose = workflows("conformite")[0]
+    impose = variable("WORKFLOWS")[0]
     contenu = (RACINE / impose).read_text(encoding="utf-8")
 
     attendus = {
@@ -187,7 +159,7 @@ def test_chaque_etape_rend_son_verdict_meme_apres_un_echec() -> None:
     Et sans etape de verdict final, le job prendrait la couleur de sa DERNIERE
     etape : un echec en cours de route passerait alors inapercu.
     """
-    contenu = (RACINE / workflows("conformite")[0]).read_text(encoding="utf-8")
+    contenu = (RACINE / variable("WORKFLOWS")[0]).read_text(encoding="utf-8")
     assert contenu.count("if: always()") >= 5, (
         "chaque etape de scan, plus l'etape de verdict, doit porter `if: always()`"
     )
@@ -196,36 +168,33 @@ def test_chaque_etape_rend_son_verdict_meme_apres_un_echec() -> None:
     )
 
 
-@pytest.mark.parametrize("cle", CLES)
-def test_chaque_workflow_impose_existe_dans_le_depot(cle: str) -> None:
+def test_chaque_workflow_impose_existe_dans_le_depot() -> None:
     """Un chemin fautif fait échouer le check sur toutes les PR de l'organisation.
 
     Le seul symptôme est un workflow « introuvable », sans indication du
     chemin attendu.
     """
-    for chemin in workflows(cle):
+    for chemin in variable("WORKFLOWS"):
         assert (RACINE / chemin).is_file(), f"{chemin} est imposé mais absent du dépôt"
 
 
 def test_le_nom_du_check_est_celui_du_ruleset() -> None:
     """Le nom du workflow et celui de son unique job doivent rester ceux que le
     ruleset exige. Lu en texte : ce projet de tests n'a pas de lecteur YAML."""
-    noms = {"conformite": "Conformité Baseline", "secrets": "Secrets Baseline"}
-    for cle, nom in noms.items():
-        contenu = (RACINE / workflows(cle)[0]).read_text(encoding="utf-8")
-        assert f"\nname: {nom}\n" in contenu
-        assert f"\n    name: {nom}\n" in contenu
-        assert contenu.count("\n    name: ") == 1
+    nom = "Conformité Baseline"
+    contenu = (RACINE / variable("WORKFLOWS")[0]).read_text(encoding="utf-8")
+    assert f"\nname: {nom}\n" in contenu
+    assert f"\n    name: {nom}\n" in contenu
+    assert contenu.count("\n    name: ") == 1
 
 
-@pytest.mark.parametrize("cle", CLES)
-def test_regle_a_la_forme_attendue_par_lapi(cle: str) -> None:
+def test_regle_a_la_forme_attendue_par_lapi() -> None:
     """L'API ignore silencieusement les clés qu'elle ne connaît pas.
 
     Une faute de frappe sur `repository_id` ne produirait donc aucune erreur,
     seulement un ruleset qui n'impose rien.
     """
-    regles = appeler(f"regles_workflows {cle}")
+    regles = appeler("regles_workflows")
     assert len(regles) == 1
     assert regles[0]["type"] == "workflows"
     for workflow in regles[0]["parameters"]["workflows"]:
@@ -234,12 +203,9 @@ def test_regle_a_la_forme_attendue_par_lapi(cle: str) -> None:
         assert workflow["ref"] == "refs/tags/v2"
 
 
-def test_les_deux_rulesets_pointent_le_meme_depot_source() -> None:
-    identifiants = {
-        w["repository_id"]
-        for cle in CLES
-        for w in appeler(f"regles_workflows {cle}")[0]["parameters"]["workflows"]
-    }
+def test_toutes_les_regles_pointent_le_meme_depot_source() -> None:
+    regles = appeler("regles_workflows")
+    identifiants = {w["repository_id"] for w in regles[0]["parameters"]["workflows"]}
     assert len(identifiants) == 1
 
 
@@ -248,49 +214,38 @@ def test_les_deux_rulesets_pointent_le_meme_depot_source() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cle", CLES)
-def test_charge_de_creation_est_complete(cle: str) -> None:
-    charge = appeler(f"charge_ruleset {cle}")
+def test_charge_de_creation_est_complete() -> None:
+    charge = appeler("charge_ruleset")
     assert set(charge) == {"name", "target", "enforcement", "conditions", "rules"}
     assert charge["target"] == "branch"
 
 
 @pytest.mark.parametrize("mode", ["evaluate", "active"])
 def test_mode_dapplication_est_celui_demande(mode: str) -> None:
-    assert appeler(f"charge_ruleset secrets {mode}")["enforcement"] == mode
+    assert appeler(f"charge_ruleset {mode}")["enforcement"] == mode
 
 
-@pytest.mark.parametrize("cle", CLES)
-def test_creation_par_defaut_est_en_evaluate(cle: str) -> None:
+def test_creation_par_defaut_est_en_evaluate() -> None:
     """La création par défaut ne doit jamais activer un ruleset sans qu'on le veuille."""
-    assert appeler(f"charge_ruleset {cle}")["enforcement"] == "evaluate"
+    assert appeler("charge_ruleset")["enforcement"] == "evaluate"
 
 
-@pytest.mark.parametrize("cle", CLES)
-def test_charge_de_creation_porte_perimetre_et_regles_de_son_ruleset(cle: str) -> None:
+def test_charge_de_creation_porte_le_meme_perimetre_que_les_conditions() -> None:
     """Création et mise à jour doivent parler du même périmètre.
 
     Deux définitions divergeraient au premier ajustement, et le ruleset
     reconstruit après un incident ne serait plus celui qu'on croyait.
     """
-    charge = appeler(f"charge_ruleset {cle}")
-    assert charge["conditions"] == appeler(f"conditions_ruleset {cle}")
-    assert charge["rules"] == appeler(f"regles_workflows {cle}")
-
-
-def test_les_deux_charges_different_par_le_nom_les_branches_et_le_workflow() -> None:
-    conformite = appeler("charge_ruleset conformite")
-    secrets = appeler("charge_ruleset secrets")
-    assert conformite["name"] != secrets["name"]
-    assert conformite["conditions"]["ref_name"] != secrets["conditions"]["ref_name"]
-    assert conformite["rules"] != secrets["rules"]
-    perimetre_c = conformite["conditions"]["repository_name"]
-    assert perimetre_c == secrets["conditions"]["repository_name"]
+    charge = appeler("charge_ruleset")
+    assert charge["conditions"] == appeler("conditions_ruleset")
+    assert charge["rules"] == appeler("regles_workflows")
 
 
 # --------------------------------------------------------------------------
 # Scripts
 # --------------------------------------------------------------------------
+
+SCRIPTS_RULESET = ["creer-ruleset.sh", "maj-ruleset.sh", "activer-ruleset.sh"]
 
 
 def lancer(
@@ -305,27 +260,22 @@ def lancer(
     )
 
 
-@pytest.mark.parametrize("script", ["creer-ruleset.sh", "maj-ruleset.sh", "activer-ruleset.sh"])
-def test_les_scripts_exigent_un_ruleset_nomme(script: str) -> None:
-    """Sans cle, aucun script ne devine le ruleset a toucher."""
-    resultat = lancer(script)
-    assert resultat.returncode == 2
-    assert "conformite|secrets" in resultat.stderr
-
-
-def test_creer_a_blanc_affiche_la_charge_du_ruleset_demande() -> None:
-    resultat = lancer("creer-ruleset.sh", "secrets", env={"DRY_RUN": "1"})
-    assert resultat.returncode == 0, resultat.stderr
-    assert json.loads(resultat.stdout) == appeler("charge_ruleset secrets")
-
-
-def test_creer_actif_a_la_demande() -> None:
-    env = {"DRY_RUN": "1", "ENFORCEMENT": "active"}
-    resultat = lancer("creer-ruleset.sh", "secrets", env=env)
-    assert json.loads(resultat.stdout)["enforcement"] == "active"
+def avec_faux_gh(tmp_path: Path, **env: str) -> dict[str, str]:
+    faux = tmp_path / "bin"
+    faux.mkdir()
+    gh = faux / "gh"
+    gh.write_text(FAUX_GH)
+    gh.chmod(0o755)
+    return {
+        "PATH": f"{faux}:{os.environ['PATH']}",
+        "FAKE_PUT": str(tmp_path / "put"),
+        "FAKE_APPELE": str(tmp_path / "gh.appele"),
+        **env,
+    }
 
 
 FAUX_GH = """#!/bin/bash
+echo "$*" >> "$FAKE_APPELE"
 case "$*" in
   *"contents/"*) exit 0 ;;
   "api orgs/Baseline-quebec/rulesets --paginate --jq"*) echo 42 ;;
@@ -336,9 +286,31 @@ esac
 """
 
 
+def test_creer_a_blanc_affiche_la_charge_du_ruleset() -> None:
+    resultat = lancer("creer-ruleset.sh", env={"DRY_RUN": "1"})
+    assert resultat.returncode == 0, resultat.stderr
+    assert json.loads(resultat.stdout) == appeler("charge_ruleset")
+
+
+def test_creer_actif_a_la_demande() -> None:
+    env = {"DRY_RUN": "1", "ENFORCEMENT": "active"}
+    resultat = lancer("creer-ruleset.sh", env=env)
+    assert json.loads(resultat.stdout)["enforcement"] == "active"
+
+
+@pytest.mark.parametrize("script", ["creer-ruleset.sh", "maj-ruleset.sh"])
+def test_un_argument_inattendu_est_fatal_avant_tout_appel_gh(script: str, tmp_path: Path) -> None:
+    """L'ancienne cle (`secrets`, `conformite`) ou une faute de frappe s'arrete
+    avant tout `gh api`."""
+    env = avec_faux_gh(tmp_path)
+    resultat = lancer(script, "secrets", env=env)
+    assert resultat.returncode == 2
+    assert not (tmp_path / "gh.appele").exists(), "gh a ete appele"
+
+
 def vivant_conformite(branches_vivantes: list[str]) -> dict[str, Any]:
-    """Un ruleset de conformité tel que l'API le rendrait, avec une exclusion de
-    plus que la déclaration pour vérifier qu'elle survit."""
+    """Le ruleset tel que l'API le rendrait, avec une exclusion de plus que la
+    declaration pour verifier qu'elle survit."""
     exclus = [*variable("EXCLUS"), "depot-exclu-a-la-main"]
     return {
         "id": 42,
@@ -346,38 +318,30 @@ def vivant_conformite(branches_vivantes: list[str]) -> dict[str, Any]:
             "ref_name": {"include": branches_vivantes, "exclude": []},
             "repository_name": {"include": ["~ALL"], "exclude": exclus},
         },
-        "rules": appeler("regles_workflows conformite"),
+        "rules": appeler("regles_workflows"),
     }
 
 
 def lancer_maj(
     tmp_path: Path, vivant: dict[str, Any], **env: str
 ) -> subprocess.CompletedProcess[str]:
-    faux = tmp_path / "bin"
-    faux.mkdir()
-    gh = faux / "gh"
-    gh.write_text(FAUX_GH)
-    gh.chmod(0o755)
     fichier = tmp_path / "vivant.json"
     fichier.write_text(json.dumps(vivant))
     return lancer(
         "maj-ruleset.sh",
-        "conformite",
-        env={
-            "PATH": f"{faux}:{os.environ['PATH']}",
-            "FAKE_VIVANT": str(fichier),
-            "FAKE_PUT": str(tmp_path / "put"),
-            "DRY_RUN": "1",
-            **env,
-        },
+        env=avec_faux_gh(tmp_path, FAKE_VIVANT=str(fichier), DRY_RUN="1", **env),
     )
+
+
+def corps_du_put(resultat: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    return json.loads(resultat.stdout[resultat.stdout.index("{") :])
 
 
 def test_maj_restreint_conformite_a_la_branche_par_defaut_sur_demande(tmp_path: Path) -> None:
     vivant = vivant_conformite(["~DEFAULT_BRANCH", "refs/heads/develop"])
     resultat = lancer_maj(tmp_path, vivant, AVEC_CONDITIONS="1")
     assert resultat.returncode == 0, resultat.stderr
-    corps = json.loads(resultat.stdout[resultat.stdout.index("{") :])
+    corps = corps_du_put(resultat)
     assert corps["conditions"]["ref_name"]["include"] == ["~DEFAULT_BRANCH"]
     # Les exclusions reelles survivent, meme celle que le depot ne declare pas.
     assert "depot-exclu-a-la-main" in corps["conditions"]["repository_name"]["exclude"]
@@ -403,36 +367,6 @@ def test_maj_est_idempotente(tmp_path: Path) -> None:
     assert "Rien a changer." in resultat.stdout
 
 
-@pytest.mark.parametrize("fonction", ["regles_workflows", "conditions_ruleset", "charge_ruleset"])
-def test_une_cle_inconnue_fait_sortir_chaque_fonction_publique(fonction: str) -> None:
-    """Une erreur dans `$(...)` resterait confinee : chaque fonction valide la
-    cle en tete et sort en erreur."""
-    resultat = subprocess.run(
-        ["bash", "-c", f'source "{COMMUN}" && {fonction} inconnu'],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert resultat.returncode != 0
-    assert resultat.stdout == ""
-
-
-@pytest.mark.parametrize("script", ["creer-ruleset.sh", "maj-ruleset.sh", "activer-ruleset.sh"])
-def test_une_cle_inconnue_n_appelle_jamais_gh(script: str, tmp_path: Path) -> None:
-    """Une cle mal tapee dans un script qui ecrit dans l'organisation s'arrete
-    avant tout appel `gh api`."""
-    faux = tmp_path / "bin"
-    faux.mkdir()
-    marque = tmp_path / "gh.appele"
-    gh = faux / "gh"
-    gh.write_text(f'#!/bin/bash\necho "$@" >> "{marque}"\nexit 0\n')
-    gh.chmod(0o755)
-    resultat = lancer(script, "inconnu", env={"PATH": f"{faux}:{os.environ['PATH']}"})
-    assert resultat.returncode != 0
-    assert "Ruleset inconnu" in resultat.stderr
-    assert not marque.exists(), "gh a ete appele malgre une cle inconnue"
-
-
 AUTRE_REGLE = {"type": "pull_request", "parameters": {"required_approving_review_count": 1}}
 
 
@@ -447,23 +381,22 @@ def test_maj_des_regles_conserve_les_autres_regles_et_parametres(tmp_path: Path)
     ]
     resultat = lancer_maj(tmp_path, vivant)
     assert resultat.returncode == 0, resultat.stderr
-    corps = json.loads(resultat.stdout[resultat.stdout.index("{") :])
+    corps = corps_du_put(resultat)
     assert "conditions" not in corps
     assert corps["rules"][0] == AUTRE_REGLE
-    workflows_regle = corps["rules"][1]["parameters"]
-    assert workflows_regle["parametre_inconnu"] == 7
-    assert workflows_regle["do_not_enforce_on_create"] is True
-    assert [w["path"] for w in workflows_regle["workflows"]] == workflows("conformite")
+    regle = corps["rules"][1]["parameters"]
+    assert regle["parametre_inconnu"] == 7
+    assert regle["do_not_enforce_on_create"] is True
+    assert [w["path"] for w in regle["workflows"]] == variable("WORKFLOWS")
 
 
 def test_maj_remet_do_not_enforce_on_create_perdu(tmp_path: Path) -> None:
     vivant = vivant_conformite(["~DEFAULT_BRANCH"])
-    parametres = vivant["rules"][0]["parameters"]
-    del parametres["do_not_enforce_on_create"]
+    del vivant["rules"][0]["parameters"]["do_not_enforce_on_create"]
     vivant["rules"].append(AUTRE_REGLE)
     resultat = lancer_maj(tmp_path, vivant)
     assert resultat.returncode == 0, resultat.stderr
-    corps = json.loads(resultat.stdout[resultat.stdout.index("{") :])
+    corps = corps_du_put(resultat)
     assert corps["rules"][0]["parameters"]["do_not_enforce_on_create"] is True
     assert AUTRE_REGLE in corps["rules"]
 
@@ -471,46 +404,39 @@ def test_maj_remet_do_not_enforce_on_create_perdu(tmp_path: Path) -> None:
 def test_maj_ajoute_la_regle_workflows_si_elle_manquait(tmp_path: Path) -> None:
     vivant = vivant_conformite(["~DEFAULT_BRANCH"])
     vivant["rules"] = [AUTRE_REGLE]
-    resultat = lancer_maj(tmp_path, vivant)
-    corps = json.loads(resultat.stdout[resultat.stdout.index("{") :])
+    corps = corps_du_put(lancer_maj(tmp_path, vivant))
     assert corps["rules"][0] == AUTRE_REGLE
     assert corps["rules"][1]["type"] == "workflows"
 
 
 def lancer_activer(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], Path]:
-    faux = tmp_path / "bin"
-    faux.mkdir()
-    gh = faux / "gh"
-    gh.write_text(FAUX_GH)
-    gh.chmod(0o755)
-    put = tmp_path / "put"
-    resultat = lancer(
-        "activer-ruleset.sh",
-        *args,
-        env={"PATH": f"{faux}:{os.environ['PATH']}", "FAKE_PUT": str(put)},
-    )
-    return resultat, put
+    resultat = lancer("activer-ruleset.sh", *args, env=avec_faux_gh(tmp_path))
+    return resultat, tmp_path / "put"
 
 
 def test_activer_retour_arriere_en_disabled(tmp_path: Path) -> None:
-    resultat, put = lancer_activer(tmp_path, "secrets", "disabled")
+    resultat, put = lancer_activer(tmp_path, "disabled")
     assert resultat.returncode == 0, resultat.stderr
     assert "enforcement=disabled" in put.read_text()
 
 
 def test_activer_par_defaut_met_en_active(tmp_path: Path) -> None:
-    resultat, put = lancer_activer(tmp_path, "secrets")
+    resultat, put = lancer_activer(tmp_path)
     assert resultat.returncode == 0, resultat.stderr
     assert "enforcement=active" in put.read_text()
 
 
-def test_activer_refuse_un_mode_inconnu_avant_tout_appel(tmp_path: Path) -> None:
-    resultat, put = lancer_activer(tmp_path, "secrets", "bidon")
+@pytest.mark.parametrize("args", [("bidon",), ("active", "secrets"), ("secrets",)])
+def test_activer_refuse_un_argument_inconnu_avant_tout_appel(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    resultat, put = lancer_activer(tmp_path, *args)
     assert resultat.returncode == 2
     assert not put.exists()
+    assert not (tmp_path / "gh.appele").exists(), "gh a ete appele"
 
 
-@pytest.mark.parametrize("script", ["creer-ruleset.sh", "maj-ruleset.sh", "activer-ruleset.sh"])
+@pytest.mark.parametrize("script", SCRIPTS_RULESET)
 def test_les_listes_de_rulesets_sont_paginees(script: str) -> None:
     """Au-dela de 30 rulesets, la premiere page ne montre pas tout : un ruleset
     existant paraitrait absent."""
